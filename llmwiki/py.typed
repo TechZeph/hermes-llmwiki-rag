@@ -1,0 +1,5 @@
+"""Marker file declaring this package supports type checking.
+
+Per PEP 561. Distributors (and mypy in --strict mode) look for this file
+to know that the package's inline annotations can be relied on.
+"""

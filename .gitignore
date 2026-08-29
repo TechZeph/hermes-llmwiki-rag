@@ -1,0 +1,23 @@
+# Build artifacts
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# Local data
+.data/
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+
+# Editor
+.vscode/
+.idea/
+.DS_Store
