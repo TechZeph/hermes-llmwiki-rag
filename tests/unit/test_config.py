@@ -1,4 +1,5 @@
 """Test the default user-data directory resolution."""
+
 from pathlib import Path
 
 import pytest
@@ -16,7 +17,9 @@ def test_default_user_data_dir_no_xdg(monkeypatch: pytest.MonkeyPatch) -> None:
     assert _default_user_data_dir() == Path.home() / ".local" / "share" / "llmwiki"
 
 
-def test_from_env_uses_user_data_dir_by_default(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_from_env_uses_user_data_dir_by_default(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
     monkeypatch.delenv("LLMWIKI_DB", raising=False)
     s = Settings.from_env()

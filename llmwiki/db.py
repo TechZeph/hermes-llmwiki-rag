@@ -23,7 +23,11 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Final
 
-_SCHEMA_VERSION: Final = 1
+from .logging import get_logger
+
+logger = get_logger("db")
+
+_SCHEMA_VERSION: Final = 2
 
 _SCHEMA_SQL: Final = """
 CREATE TABLE IF NOT EXISTS schema_meta (
@@ -50,7 +54,27 @@ CREATE TABLE IF NOT EXISTS documents (
 CREATE INDEX IF NOT EXISTS idx_documents_mtime ON documents(mtime_ns);
 CREATE INDEX IF NOT EXISTS idx_documents_hash  ON documents(content_hash);
 
--- Phase 2 will add: chunks, chunks_fts, chunk_embeddings
+-- Phase 2: structural chunks. One row per (document, position) pair.
+-- ``heading_path_json`` is a JSON list of strings (the breadcrumb);
+-- ``section_name`` is the last element (the most specific heading).
+CREATE TABLE IF NOT EXISTS chunks (
+    id                INTEGER PRIMARY KEY AUTOINCREMENT,
+    document_id       INTEGER NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+    position          INTEGER NOT NULL,             -- ordinal within the document
+    heading_path_json TEXT    NOT NULL DEFAULT '[]',
+    section_name      TEXT    NOT NULL DEFAULT '',
+    text              TEXT    NOT NULL,
+    text_hash         TEXT    NOT NULL,              -- sha256 of the chunk text (for fast equality)
+    char_count        INTEGER NOT NULL,
+    indexed_at_ns     INTEGER NOT NULL,
+    UNIQUE (document_id, position)
+);
+
+CREATE INDEX IF NOT EXISTS idx_chunks_document ON chunks(document_id);
+CREATE INDEX IF NOT EXISTS idx_chunks_hash     ON chunks(text_hash);
+
+-- Phase 3 will add: chunk_embeddings (sqlite-vec)
+-- Phase 4 will add: chunks_fts (FTS5 virtual table)
 -- Phase 10 will add: graph_edges
 -- Phase 13 will add: retrieval_runs, eval_results
 
@@ -73,13 +97,85 @@ def init_schema(conn: sqlite3.Connection) -> None:
     """Create tables and indexes if they do not yet exist.
 
     Also records the current schema version. Safe to call repeatedly.
+
+    Schema migrations:
+
+    - v1 → v2: introduced the ``chunks`` table. Existing v1 databases
+      had document rows but no chunks. ``_backfill_v2_chunks`` is
+      called once to populate chunks for every existing document.
+      The backfill is also a no-op safety net on every run: if any
+      document is missing chunks, they are filled in. This catches
+      a backfill that crashed mid-run, and any future schema
+      migration that adds a new derived table.
     """
     conn.executescript(_SCHEMA_SQL)
+    previous_version_row = conn.execute(
+        "SELECT value FROM schema_meta WHERE key = 'schema_version'"
+    ).fetchone()
+    previous_version = int(previous_version_row[0]) if previous_version_row else 0
     conn.execute(
         "INSERT OR REPLACE INTO schema_meta(key, value) VALUES (?, ?)",
         ("schema_version", str(_SCHEMA_VERSION)),
     )
+    if previous_version < 2:
+        _backfill_v2_chunks(conn)
+    # Always run the orphan-chunks backfill: cheap (single query),
+    # and it makes the system self-healing for any document that
+    # lost its chunks (e.g. due to a crash mid-write).
+    _backfill_orphan_chunks(conn)
     conn.commit()
+
+
+def _backfill_v2_chunks(conn: sqlite3.Connection) -> None:
+    """Populate chunks for every document that has none.
+
+    Kept for the v1 → v2 migration path. The unconditional
+    ``_backfill_orphan_chunks`` is what runs on every subsequent
+    index; this function exists only so the v1 → v2 jump logs a
+    one-time message.
+    """
+    _backfill_orphan_chunks(conn, log=True)
+
+
+def _backfill_orphan_chunks(conn: sqlite3.Connection, *, log: bool = False) -> None:
+    """Populate chunks for every document that has none.
+
+    Runs on every ``init_schema`` call. Cheap (one SELECT), and it
+    makes the system self-healing: any document whose chunks went
+    missing (crash mid-write, manual SQL, etc.) is re-chunked on
+    the next index.
+    """
+    from .indexer import _build_document_and_parsed, _chunk_and_persist
+
+    rows = conn.execute(
+        "SELECT d.id, d.absolute_path FROM documents d "
+        "WHERE NOT EXISTS (SELECT 1 FROM chunks c WHERE c.document_id = d.id)"
+    ).fetchall()
+    if not rows:
+        return
+    if log:
+        logger.info("schema v1->v2 backfill: chunking %d existing documents", len(rows))
+    else:
+        logger.info("orphan-chunks backfill: chunking %d documents", len(rows))
+    from pathlib import Path
+
+    from .indexer import VaultFile
+
+    for doc_id, abs_path in rows:
+        try:
+            vf_path = Path(abs_path)
+            if not vf_path.exists():
+                continue
+            vf = VaultFile(
+                rel_path="",  # unused by the chunker
+                abs_path=vf_path,
+                mtime_ns=vf_path.stat().st_mtime_ns,
+                size_bytes=vf_path.stat().st_size,
+            )
+            _doc, parsed = _build_document_and_parsed(vf, vf_path.parent)
+            _chunk_and_persist(conn, int(doc_id), parsed)
+        except Exception as exc:
+            logger.warning("orphan-chunks backfill failed for %s: %s", abs_path, exc)
 
 
 @contextmanager

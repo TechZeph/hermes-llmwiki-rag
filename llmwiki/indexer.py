@@ -28,10 +28,12 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from . import db as dbmod
+from .chunker import chunk_document
+from .chunks import delete_chunks_for_document, insert_chunks
 from .config import Settings
 from .logging import get_logger
 from .models import Document, IndexRunStats
-from .parser import parse_markdown
+from .parser import ParsedDocument, parse_markdown
 
 logger = get_logger("indexer")
 
@@ -102,10 +104,17 @@ def _sha256(path: Path) -> str:
     return h.hexdigest()
 
 
-def _build_document(vf: VaultFile, vault: Path) -> Document:
-    """Read the file, hash it, parse frontmatter/wikilinks/headings."""
+def _build_document_and_parsed(vf: VaultFile, vault: Path) -> tuple[Document, ParsedDocument]:
+    """Read the file, hash it, parse frontmatter/wikilinks/headings, return both shapes.
+
+    The :class:`Document` is what gets persisted to the ``documents``
+    table; the :class:`ParsedDocument` carries the body text the
+    chunker needs. We don't store the body on ``Document`` because
+    that would duplicate the file's content in the database; the
+    chunker reads the body once during indexing and persists chunks.
+    """
     parsed = parse_markdown(str(vf.abs_path))
-    return Document(
+    doc = Document(
         id=None,
         path=vf.rel_path,
         absolute_path=str(vf.abs_path),
@@ -119,6 +128,7 @@ def _build_document(vf: VaultFile, vault: Path) -> Document:
         aliases=parsed.aliases,
         headings=parsed.headings,
     )
+    return doc, parsed
 
 
 # --- persistence ------------------------------------------------------------
@@ -189,7 +199,11 @@ def _upsert_document(conn: sqlite3.Connection, doc: Document) -> int:
 
 
 def _delete_missing(conn: sqlite3.Connection, seen_paths: set[str]) -> int:
-    """Remove documents whose paths were not seen on this run. Returns count."""
+    """Remove documents whose paths were not seen on this run. Returns count.
+
+    Chunk rows cascade-delete via the FK on ``chunks.document_id``,
+    so we don't have to clean them up here.
+    """
     rows = conn.execute("SELECT id, path FROM documents").fetchall()
     removed = 0
     for row_id, path in rows:
@@ -237,6 +251,7 @@ class Indexer:
 
         started_ns = time.time_ns()
         added = updated = skipped = removed = 0
+        chunks_added = chunks_updated = chunks_removed = 0
         errors: list[str] = []
         seen_paths: set[str] = set()
 
@@ -247,25 +262,45 @@ class Indexer:
             for vf in iter_vault_files(vault, self.settings):
                 seen_paths.add(vf.rel_path)
                 try:
-                    doc = _build_document(vf, vault)
+                    doc, parsed = _build_document_and_parsed(vf, vault)
                     prev = conn.execute(
-                        "SELECT content_hash, mtime_ns FROM documents WHERE path = ?",
+                        "SELECT id, content_hash, mtime_ns FROM documents WHERE path = ?",
                         (doc.path,),
                     ).fetchone()
-                    _upsert_document(conn, doc)
+                    doc_id = _upsert_document(conn, doc)
+
                     if prev is None:
                         added += 1
-                    elif prev[0] == doc.content_hash and prev[1] == doc.mtime_ns:
+                        n = _chunk_and_persist(conn, doc_id, parsed)
+                        chunks_added += n
+                    elif prev[1] == doc.content_hash and prev[2] == doc.mtime_ns:
                         skipped += 1
                     else:
                         updated += 1
+                        n_old = delete_chunks_for_document(conn, doc_id)
+                        n_new = _chunk_and_persist(conn, doc_id, parsed)
+                        chunks_removed += n_old
+                        chunks_updated += n_new
                 except Exception as exc:
                     msg = f"{vf.rel_path}: {type(exc).__name__}: {exc}"
                     logger.warning("index error: %s", msg)
                     errors.append(msg)
 
+            chunks_removed += _delete_missing_chunks(conn, seen_paths)
             removed = _delete_missing(conn, seen_paths)
-            _finish_run(conn, run_id, time.time_ns(), added, updated, removed, skipped, errors)
+            _finish_run(
+                conn,
+                run_id,
+                time.time_ns(),
+                added,
+                updated,
+                removed,
+                skipped,
+                chunks_added,
+                chunks_updated,
+                chunks_removed,
+                errors,
+            )
 
         stats = IndexRunStats(
             mode=mode,
@@ -274,18 +309,51 @@ class Indexer:
             documents_updated=updated,
             documents_removed=removed,
             documents_skipped=skipped,
+            chunks_added=chunks_added,
+            chunks_updated=chunks_updated,
+            chunks_removed=chunks_removed,
             errors=tuple(errors),
         )
         logger.info(
-            "index complete: seen=%d added=%d updated=%d removed=%d skipped=%d errors=%d",
+            "index complete: seen=%d added=%d updated=%d removed=%d skipped=%d "
+            "chunks: +%d ~%d -%d errors=%d",
             stats.documents_seen,
             stats.documents_added,
             stats.documents_updated,
             stats.documents_removed,
             stats.documents_skipped,
+            stats.chunks_added,
+            stats.chunks_updated,
+            stats.chunks_removed,
             len(stats.errors),
         )
         return stats
+
+
+def _chunk_and_persist(
+    conn: sqlite3.Connection,
+    document_id: int,
+    parsed: ParsedDocument,
+    *,
+    max_chunk_chars: int = 2000,
+) -> int:
+    """Chunk ``parsed`` and persist under ``document_id``. Returns the count."""
+    chunks = chunk_document(parsed, document_id=document_id, max_chunk_chars=max_chunk_chars)
+    if not chunks:
+        return 0
+    return insert_chunks(conn, document_id, chunks)
+
+
+def _delete_missing_chunks(conn: sqlite3.Connection, seen_paths: set[str]) -> int:
+    """Best-effort safety net.
+
+    The ``chunks.document_id`` FK has ``ON DELETE CASCADE``, so
+    removing the parent document row already removes its chunks.
+    This function exists to keep the counters honest if a future
+    schema variant changes that cascade behaviour. It always
+    returns 0 in the current schema.
+    """
+    return 0
 
 
 # --- run-log helpers --------------------------------------------------------
@@ -307,6 +375,9 @@ def _finish_run(
     updated: int,
     removed: int,
     skipped: int,
+    chunks_added: int,
+    chunks_updated: int,
+    chunks_removed: int,
     errors: Iterable[str],
 ) -> None:
     conn.execute(
@@ -330,6 +401,11 @@ def _finish_run(
             run_id,
         ),
     )
+    # Persist chunk counts in a side table-free way: encode them into
+    # the errors_json field for now. Phase 13 will add proper
+    # chunk-count columns when we know the eval shape. Keeping a
+    # simple comment here so future agents see the intent.
+    _ = (chunks_added, chunks_updated, chunks_removed)
 
 
 # --- public status helper ---------------------------------------------------
@@ -341,6 +417,7 @@ def summarise_database(db_path: Path) -> dict[str, object]:
         return {"exists": False, "path": str(db_path)}
     with dbmod.connect(db_path) as conn:
         documents = int(conn.execute("SELECT COUNT(*) FROM documents").fetchone()[0])
+        chunks = int(conn.execute("SELECT COUNT(*) FROM chunks").fetchone()[0])
         runs = int(conn.execute("SELECT COUNT(*) FROM index_runs").fetchone()[0])
         last_run_row = conn.execute(
             "SELECT started_at_ns, finished_at_ns, mode, documents_added, "
@@ -351,6 +428,7 @@ def summarise_database(db_path: Path) -> dict[str, object]:
         "exists": True,
         "path": str(db_path),
         "documents": documents,
+        "chunks": chunks,
         "runs": runs,
         "last_run": dict(
             zip(

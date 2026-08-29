@@ -50,24 +50,50 @@ class IndexRunStats:
     runs with retrieval quality.
     """
 
-    mode: str  # "full" | "incremental"
+    mode: str  # "incremental" | "full"
     documents_seen: int = 0
     documents_added: int = 0
     documents_updated: int = 0
     documents_removed: int = 0
     documents_skipped: int = 0
+    chunks_added: int = 0
+    chunks_updated: int = 0
+    chunks_removed: int = 0
     errors: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
 class Chunk:
-    """A structural chunk of a document (Phase 2 placeholder)."""
+    """A structural chunk of a document.
+
+    Attributes
+    ----------
+    id:
+        Database row id. ``None`` for unsaved chunks.
+    document_id:
+        Row id of the parent :class:`Document`.
+    heading_path:
+        Breadcrumb of heading names, starting with the document
+        title. Empty tuple only for documents with no title and no
+        headings. Example: ``("Hosp-core", "Plan", "Phase 0")``.
+    section_name:
+        The text of the most specific heading that owns this chunk
+        (the last element of ``heading_path``). Empty string if the
+        chunk is a preamble.
+    text:
+        The chunk's body text. The chunker guarantees that text is
+        never split mid-paragraph (paragraphs are atomic).
+    position:
+        Ordinal within the parent document, starting at 0. Used to
+        preserve document order for retrieval.
+    """
 
     id: int | None
     document_id: int
-    heading_path: tuple[str, ...]  # e.g. ("Hosp-core", "Plan", "Phase 0")
+    heading_path: tuple[str, ...]
+    section_name: str
     text: str
-    position: int  # ordinal within the document
+    position: int
 
 
 __all__ = ["Chunk", "Document", "IndexRunStats"]

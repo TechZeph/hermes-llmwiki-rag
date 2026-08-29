@@ -55,6 +55,13 @@ class ParsedDocument:
     wikilinks: tuple[str, ...]
     aliases: tuple[str, ...]
     headings: tuple[dict[str, Any], ...]
+    body: str = ""
+    """The body of the file with the frontmatter block stripped.
+
+    Code fences are preserved; this is the text the chunker and
+    future embedders will operate on. Empty if the file had only
+    frontmatter.
+    """
 
 
 # --- implementation ----------------------------------------------------------
@@ -229,6 +236,7 @@ def parse_markdown(path: str) -> ParsedDocument:
         aliases=_normalise_aliases(fm),
         wikilinks=_extract_wikilinks(body),
         headings=_extract_headings(body),
+        body=body,
     )
 
 

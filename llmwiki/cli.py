@@ -89,7 +89,9 @@ def index(vault: Path | None, db: Path | None, mode: str, watch: bool) -> None:
     click.echo(
         f"done: seen={stats.documents_seen} added={stats.documents_added} "
         f"updated={stats.documents_updated} removed={stats.documents_removed} "
-        f"skipped={stats.documents_skipped} errors={len(stats.errors)}"
+        f"skipped={stats.documents_skipped} "
+        f"chunks: +{stats.chunks_added} ~{stats.chunks_updated} -{stats.chunks_removed} "
+        f"errors={len(stats.errors)}"
     )
     if stats.errors:
         sys.exit(1)
@@ -118,6 +120,7 @@ def status(db: Path | None, as_json: bool) -> None:
         return
     click.echo(f"database: {summary['path']}")
     click.echo(f"documents: {summary['documents']}")
+    click.echo(f"chunks: {summary['chunks']}")
     click.echo(f"index runs: {summary['runs']}")
     last_run = summary.get("last_run")
     if last_run is not None:
