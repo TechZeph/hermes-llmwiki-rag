@@ -27,9 +27,14 @@ from .logging import get_logger
 
 logger = get_logger("db")
 
-_SCHEMA_VERSION: Final = 2
+_SCHEMA_VERSION: Final = 3
 
-_SCHEMA_SQL: Final = """
+# sqlite-vec needs the embedding dimension as a schema literal. The
+# plan locks BGE-small-en-v1.5 (384-dim). If we ever swap models we
+# drop and recreate the vec0 table via a future migration.
+_EMBEDDING_DIM: Final = 384
+
+_SCHEMA_SQL: Final = f"""
 CREATE TABLE IF NOT EXISTS schema_meta (
     key   TEXT PRIMARY KEY,
     value TEXT NOT NULL
@@ -47,7 +52,7 @@ CREATE TABLE IF NOT EXISTS documents (
     tags_json       TEXT    NOT NULL DEFAULT '[]',   -- JSON list of strings
     wikilinks_json  TEXT    NOT NULL DEFAULT '[]',   -- JSON list of strings (raw targets)
     aliases_json    TEXT    NOT NULL DEFAULT '[]',   -- JSON list of strings
-    headings_json   TEXT    NOT NULL DEFAULT '[]',   -- JSON list of {level, text} dicts
+    headings_json   TEXT    NOT NULL DEFAULT '[]',   -- JSON list of {{level, text}} dicts
     indexed_at_ns   INTEGER NOT NULL                 -- POSIX nanoseconds of the last successful index
 );
 
@@ -73,7 +78,17 @@ CREATE TABLE IF NOT EXISTS chunks (
 CREATE INDEX IF NOT EXISTS idx_chunks_document ON chunks(document_id);
 CREATE INDEX IF NOT EXISTS idx_chunks_hash     ON chunks(text_hash);
 
--- Phase 3 will add: chunk_embeddings (sqlite-vec)
+-- Phase 3: embeddings. The vec0 virtual table holds the vectors
+-- and an auxiliary ``embedding_model`` column tracks which model
+-- produced each row. On model change, the indexer re-embeds.
+-- The dimension ({_EMBEDDING_DIM}) is fixed at schema time; if we
+-- ever change it, drop and recreate this table.
+CREATE VIRTUAL TABLE IF NOT EXISTS chunk_embeddings USING vec0(
+    chunk_id         INTEGER PRIMARY KEY,
+    embedding float[{_EMBEDDING_DIM}],
+    embedding_model  TEXT
+);
+
 -- Phase 4 will add: chunks_fts (FTS5 virtual table)
 -- Phase 10 will add: graph_edges
 -- Phase 13 will add: retrieval_runs, eval_results
@@ -91,6 +106,10 @@ CREATE TABLE IF NOT EXISTS index_runs (
     errors_json     TEXT    NOT NULL DEFAULT '[]'
 );
 """
+
+
+# Model name + dim are exported for the embedder / indexer.
+EMBEDDING_DIM: Final = _EMBEDDING_DIM
 
 
 def init_schema(conn: sqlite3.Connection) -> None:
@@ -188,6 +207,9 @@ def connect(db_path: Path) -> Iterator[sqlite3.Connection]:
       but later phases (graph_edges) will.
     - ``synchronous=NORMAL``: WAL-safe; durable on commit.
 
+    The ``sqlite-vec`` extension is loaded on every connection so
+    the vec0 virtual table works. Loading is idempotent.
+
     The caller is responsible for committing; the context manager
     closes the connection on exit and rolls back on exception.
     """
@@ -197,6 +219,12 @@ def connect(db_path: Path) -> Iterator[sqlite3.Connection]:
         conn.execute("PRAGMA journal_mode = WAL")
         conn.execute("PRAGMA synchronous = NORMAL")
         conn.execute("PRAGMA foreign_keys = ON")
+        # Load sqlite-vec; required for the chunk_embeddings virtual table.
+        import sqlite_vec  # local import to avoid hard dep at module import time
+
+        conn.enable_load_extension(True)
+        sqlite_vec.load(conn)
+        conn.enable_load_extension(False)
         yield conn
     except Exception:
         conn.rollback()

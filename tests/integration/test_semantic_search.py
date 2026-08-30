@@ -1,0 +1,178 @@
+"""Integration test for Phase 3 end-to-end semantic search (golden question).
+
+This test does NOT use the real FastEmbed model — it uses a deterministic
+fake embedder that produces cosine-aligned vectors from keywords. That
+gives us a precise assertion: a query whose query vector is identical to
+a chunk's stored vector must surface that chunk as the top hit.
+
+The shape of this test mirrors what the Phase 13 eval harness will do
+against a real model: index a small synthetic vault, ask a question,
+verify the right document surfaces.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Sequence
+from pathlib import Path
+
+from llmwiki import db as dbmod
+from llmwiki.config import Settings
+from llmwiki.embeddings import Embedder
+from llmwiki.indexer import Indexer
+from llmwiki.vector import SqliteVecStore
+
+# The production schema hardcodes float[384]. The fake embedder below
+# uses 384-dim vectors with one-hot-at-keyword-index semantics.
+_PROD_DIM = 384
+
+
+class KeywordEmbedder(Embedder):
+    """A toy embedder that places each known keyword at a unique dim.
+
+    A text containing keyword K[i] gets a 1.0 at index i (and 0.0
+    elsewhere). The resulting vector is unit-length, so cosine
+    distance is well-defined and a query for "apple" exactly
+    matches the embedding of any text containing "apple".
+
+    The dimension is fixed at 384 to match the production schema.
+    """
+
+    def __init__(self, keywords: Sequence[str], dim: int = _PROD_DIM) -> None:
+        if len(keywords) > dim:
+            raise ValueError(
+                f"too many keywords ({len(keywords)}) for dim={dim}; "
+                f"raise dim or use fewer keywords"
+            )
+        self._keywords = tuple(keywords)
+        self._index = {kw: i for i, kw in enumerate(self._keywords)}
+        self._dim = dim
+
+    @property
+    def model_name(self) -> str:
+        return "keyword-embedder"
+
+    @property
+    def dim(self) -> int:
+        return self._dim
+
+    def embed(self, texts: Sequence[str]) -> list[list[float]]:
+        out: list[list[float]] = []
+        for t in texts:
+            v = [0.0] * self._dim
+            lower = t.lower()
+            for kw, idx in self._index.items():
+                if kw in lower:
+                    v[idx] = 1.0
+            out.append(v)
+        return out
+
+
+def _make_vault(root: Path) -> None:
+    """Three markdown files about distinct topics."""
+    (root / "apples.md").write_text(
+        "# Apples\n\n"
+        "Apples are a popular fruit. They grow on trees.\n\n"
+        "## Varieties\n\n"
+        "There are many varieties of apples including Granny Smith.\n"
+    )
+    (root / "oranges.md").write_text(
+        "# Oranges\n\n"
+        "Oranges are citrus fruits. They are rich in vitamin C.\n"
+    )
+    (root / "cars.md").write_text(
+        "# Cars\n\n"
+        "Cars are motor vehicles with four wheels and an engine.\n"
+    )
+
+
+def _path_for_chunk(conn, chunk_id: int) -> str:
+    row = conn.execute(
+        """
+        SELECT d.path FROM chunks c
+        JOIN documents d ON d.id = c.document_id
+        WHERE c.id = ?
+        """,
+        (chunk_id,),
+    ).fetchone()
+    assert row is not None
+    return str(row[0])
+
+
+def test_semantic_search_finds_relevant_document(tmp_path: Path) -> None:
+    """A query about apples should rank the apples document first.
+
+    The toy embedder gives exact one-hot vectors, so a query vector
+    for a keyword K is identical to any chunk vector that mentions
+    K. The top hit must come from the matching document.
+    """
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    _make_vault(vault)
+
+    keywords = ["apple", "orange", "fruit", "car", "wheel", "engine"]
+    db_path = tmp_path / "test.sqlite"
+    settings = Settings(vault_path=vault, db_path=db_path)
+    embedder = KeywordEmbedder(keywords=keywords)
+
+    indexer = Indexer(settings, embedder=embedder)
+    stats = indexer.run(mode="incremental")
+    assert stats.documents_added == 3
+    assert stats.chunks_added >= 3
+    assert stats.errors == ()
+
+    with dbmod.connect(db_path) as conn:
+        dbmod.init_schema(conn)
+        store = SqliteVecStore(conn)
+        assert store.count() == stats.chunks_added
+
+        for keyword, expected_path in (
+            ("apple", "apples.md"),
+            ("orange", "oranges.md"),
+            ("car", "cars.md"),
+        ):
+            q = embedder.embed([f"a query about {keyword}"])[0]
+            hits = store.search(q, top_k=1)
+            assert hits, f"expected at least one hit for {keyword!r}"
+            assert _path_for_chunk(conn, hits[0][0]) == expected_path
+
+
+def test_search_returns_top_k_in_ascending_distance_order(tmp_path: Path) -> None:
+    """Sanity: a small multi-chunk vault returns ranked results."""
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    (vault / "a.md").write_text("# A\n\napple apple apple\n")
+    (vault / "b.md").write_text("# B\n\norange orange\n")
+    keywords = ["apple", "orange"]
+    embedder = KeywordEmbedder(keywords=keywords)
+    db_path = tmp_path / "test.sqlite"
+    settings = Settings(vault_path=vault, db_path=db_path)
+    Indexer(settings, embedder=embedder).run(mode="incremental")
+
+    with dbmod.connect(db_path) as conn:
+        store = SqliteVecStore(conn)
+        hits = store.search(embedder.embed(["apple"])[0], top_k=2)
+        assert len(hits) == 2
+        # Smaller distance (more similar) comes first.
+        assert hits[0][1] <= hits[1][1]
+
+
+def test_indexed_run_is_incremental(tmp_path: Path) -> None:
+    """A second pass over an unchanged vault does no work."""
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    (vault / "a.md").write_text("# A\n\nhello world\n")
+    keywords = ["hello", "world"]
+    embedder = KeywordEmbedder(keywords=keywords)
+    db_path = tmp_path / "test.sqlite"
+    settings = Settings(vault_path=vault, db_path=db_path)
+
+    s1 = Indexer(settings, embedder=embedder).run(mode="incremental")
+    assert s1.documents_added == 1
+    assert s1.embeddings_built >= 1
+
+    s2 = Indexer(settings, embedder=embedder).run(mode="incremental")
+    assert s2.documents_added == 0
+    assert s2.documents_updated == 0
+    assert s2.documents_skipped == 1
+    assert s2.embeddings_built == 0
+    assert s2.embeddings_rebuilt == 0

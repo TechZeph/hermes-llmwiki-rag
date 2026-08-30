@@ -77,8 +77,8 @@ def test_delete_chunks_for_document_removes_all_rows(tmp_path: Path) -> None:
         doc_id = int(cur.lastrowid or 0)
         insert_chunks(conn, doc_id, [_make_chunk(doc_id, 0, "x"), _make_chunk(doc_id, 1, "y")])
         assert count_chunks(conn) == 2
-        removed = delete_chunks_for_document(conn, doc_id)
-        assert removed == 2
+        removed_ids = delete_chunks_for_document(conn, doc_id)
+        assert len(removed_ids) == 2
         assert count_chunks(conn) == 0
 
 

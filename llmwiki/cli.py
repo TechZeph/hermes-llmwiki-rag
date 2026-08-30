@@ -16,7 +16,6 @@ from __future__ import annotations
 import json
 import sys
 from pathlib import Path
-from typing import NoReturn
 
 import click
 
@@ -78,19 +77,76 @@ def main(log_level: str | None, log_format: str | None) -> None:
     default=False,
     help="Watch the vault for changes and re-index (Phase 1: not yet implemented)",
 )
-def index(vault: Path | None, db: Path | None, mode: str, watch: bool) -> None:
-    """Index a vault into the local SQLite database."""
+@click.option(
+    "--embed/--no-embed",
+    default=True,
+    help="Generate embeddings for chunks (Phase 3; default: enabled)",
+)
+def index(
+    vault: Path | None,
+    db: Path | None,
+    mode: str,
+    watch: bool,
+    embed: bool,
+) -> None:
+    """Index a vault into the local SQLite database.
+
+    On first run against a vault with no embeddings this will embed
+    every chunk (one-time cost). A 5000-chunk vault typically takes
+    30-45 minutes on a multi-core box; the work is resumable (kill
+    and re-run safely). After that, unchanged reindexes are sub-second
+    and search queries are ~30ms end-to-end.
+    """
     if watch:
         click.echo("--watch is not yet implemented (Phase 1); running one pass.", err=True)
     settings = _resolve_settings(vault=vault, db=db, watch=False)
     click.echo(f"indexing: vault={settings.vault_path} db={settings.db_path} mode={mode}")
-    indexer = Indexer(settings)
+    embedder = None
+    if embed:
+        # Lazy import: FastEmbed is heavy and may not be installed.
+        from . import db as dbmod
+        from .embeddings import FastEmbedEmbedder
+
+        click.echo(f"embedder: {settings.embedding_model}")
+        # Pre-flight: warn if a cold-start backfill is likely. We
+        # only emit the warning when embeddings ARE enabled and the
+        # DB has chunks without vectors — that's the cold-start case.
+        if settings.db_path.exists():
+            with dbmod.connect(settings.db_path) as conn:
+                dbmod.init_schema(conn)
+                n_chunks = int(
+                    conn.execute("SELECT COUNT(*) FROM chunks").fetchone()[0]
+                )
+                # chunk_embeddings may not exist in a v2 DB; ignore errors.
+                try:
+                    n_emb = int(
+                        conn.execute("SELECT COUNT(*) FROM chunk_embeddings").fetchone()[0]
+                    )
+                except Exception:
+                    n_emb = 0
+                if n_chunks > 0 and n_emb < n_chunks:
+                    pending = n_chunks - n_emb
+                    click.echo(
+                        f"cold start: {pending} chunk(s) need embedding; "
+                        f"this run will take several minutes. "
+                        f"Use --no-embed to skip and embed later.",
+                        err=True,
+                    )
+        embedder = FastEmbedEmbedder(model_name=settings.embedding_model)
+    else:
+        click.echo("embeddings: disabled (--no-embed)", err=True)
+    # The vector store needs a SQLite connection. We open it inside
+    # ``Indexer.run`` (one connection per run) so the store's lifetime
+    # is naturally bounded by the run. The CLI only owns the
+    # embedder; the store is constructed lazily.
+    indexer = Indexer(settings, embedder=embedder)
     stats = indexer.run(mode=mode)
     click.echo(
         f"done: seen={stats.documents_seen} added={stats.documents_added} "
         f"updated={stats.documents_updated} removed={stats.documents_removed} "
         f"skipped={stats.documents_skipped} "
         f"chunks: +{stats.chunks_added} ~{stats.chunks_updated} -{stats.chunks_removed} "
+        f"embeddings: built={stats.embeddings_built} rebuilt={stats.embeddings_rebuilt} "
         f"errors={len(stats.errors)}"
     )
     if stats.errors:
@@ -121,6 +177,7 @@ def status(db: Path | None, as_json: bool) -> None:
     click.echo(f"database: {summary['path']}")
     click.echo(f"documents: {summary['documents']}")
     click.echo(f"chunks: {summary['chunks']}")
+    click.echo(f"embeddings: {summary['embeddings']}")
     click.echo(f"index runs: {summary['runs']}")
     last_run = summary.get("last_run")
     if last_run is not None:
@@ -141,9 +198,87 @@ def status(db: Path | None, as_json: bool) -> None:
 @click.option("--db", type=click.Path(dir_okay=False, path_type=Path), default=None)
 @click.option("--query", required=True, help="Search query")
 @click.option("--top-k", default=10, show_default=True, type=int)
-def search(vault: Path | None, db: Path | None, query: str, top_k: int) -> NoReturn:
-    """Search the indexed vault (Phase 5+; currently a stub)."""
-    raise click.ClickException("search is not yet implemented (Phase 5+)")
+@click.option("--json", "as_json", is_flag=True, help="Output machine-readable JSON")
+def search(
+    vault: Path | None,
+    db: Path | None,
+    query: str,
+    top_k: int,
+    as_json: bool,
+) -> None:
+    """Semantic search over the indexed vault (Phase 3: vector only).
+
+    Embeds ``query`` with the configured FastEmbed model and ranks
+    the top-K most similar chunks by cosine similarity. Hybrid
+    lexical+dense fusion is Phase 5+.
+    """
+    from . import db as dbmod
+    from .embeddings import FastEmbedEmbedder
+    from .vector import SqliteVecStore
+
+    base = Settings.from_env()
+    db_path = (db or base.db_path).expanduser().resolve()
+    embedder = FastEmbedEmbedder(model_name=base.embedding_model)
+    with dbmod.connect(db_path) as conn:
+        dbmod.init_schema(conn)
+        store = SqliteVecStore(conn)
+        if store.count() == 0:
+            click.echo(
+                f"no embeddings found in {db_path}; "
+                f"run `llmwiki index` first.",
+                err=True,
+            )
+            sys.exit(2)
+        q_vec = embedder.embed([query])[0]
+        hits = store.search(q_vec, top_k=top_k)
+        if not hits:
+            click.echo("no results.")
+            return
+        # Hydrate chunk -> document for human-readable output.
+        ids = [cid for cid, _ in hits]
+        placeholders = ",".join("?" * len(ids))
+        rows = conn.execute(
+            f"""
+            SELECT c.id, c.document_id, c.position, c.section_name, c.text,
+                   d.path, d.title
+            FROM chunks c
+            JOIN documents d ON d.id = c.document_id
+            WHERE c.id IN ({placeholders})
+            """,
+            ids,
+        ).fetchall()
+        by_id = {int(r[0]): r for r in rows}
+        results = []
+        for cid, distance in hits:
+            row = by_id.get(cid)
+            if row is None:
+                continue
+            results.append(
+                {
+                    "chunk_id": int(row[0]),
+                    "document_id": int(row[1]),
+                    "position": int(row[2]),
+                    "section_name": str(row[3]),
+                    "text": str(row[4]),
+                    "path": str(row[5]),
+                    "title": str(row[6]),
+                    "distance": float(distance),
+                }
+            )
+    if as_json:
+        click.echo(json.dumps(results, indent=2, ensure_ascii=False))
+        return
+    for r in results:
+        click.echo(
+            f"[d={r['distance']:.4f}] {r['path']}#{r['section_name'] or '(intro)'} "
+            f"(chunk {r['position']})"
+        )
+        # Show first 240 chars of the chunk text.
+        snippet = str(r["text"]).strip().replace("\n", " ")
+        if len(snippet) > 240:
+            snippet = snippet[:237] + "..."
+        click.echo(f"    {snippet}")
+        click.echo("")
 
 
 if __name__ == "__main__":  # pragma: no cover

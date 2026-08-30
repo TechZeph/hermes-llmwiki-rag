@@ -48,6 +48,12 @@ class IndexRunStats:
     Returned by :class:`llmwiki.indexer.Indexer.run` so the CLI can
     report what happened and the eval harness can later correlate
     runs with retrieval quality.
+
+    Phase 3 adds ``embeddings_built`` and ``embeddings_rebuilt`` —
+    counts of vector rows written by the run. ``built`` covers new
+    vectors from added/updated chunks; ``rebuilt`` covers chunks
+    whose embedding was rewritten because the configured embedding
+    model changed since last run.
     """
 
     mode: str  # "incremental" | "full"
@@ -59,6 +65,8 @@ class IndexRunStats:
     chunks_added: int = 0
     chunks_updated: int = 0
     chunks_removed: int = 0
+    embeddings_built: int = 0
+    embeddings_rebuilt: int = 0
     errors: tuple[str, ...] = ()
 
 

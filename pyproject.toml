@@ -25,9 +25,9 @@ dependencies = [
     "watchdog>=4.0",
     "click>=8.1",
     "pyyaml>=6.0",
-    # Phase 3 onwards (deferred to keep Phase 0/1 light):
-    # "fastembed>=0.4",
-    # "sqlite-vec>=0.1",
+    "fastembed>=0.4",
+    "sqlite-vec>=0.1",
+    "numpy>=1.26",
 ]
 
 [project.optional-dependencies]
@@ -37,12 +37,6 @@ dev = [
     "ruff>=0.6",
     "mypy>=1.10",
     "types-PyYAML",
-]
-embed = [
-    # "fastembed>=0.4",  # Phase 3
-]
-vector = [
-    # "sqlite-vec>=0.1",  # Phase 3
 ]
 
 [project.scripts]

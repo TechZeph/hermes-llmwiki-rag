@@ -28,7 +28,7 @@ def _hash_text(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
-def insert_chunks(conn: sqlite3.Connection, document_id: int, chunks: Iterable[Chunk]) -> int:
+def insert_chunks(conn: sqlite3.Connection, document_id: int, chunks: Iterable[Chunk]) -> list[int]:
     """Replace all chunks for ``document_id`` with the given list.
 
     Strategy: delete-then-insert in a single transaction. This is
@@ -37,14 +37,16 @@ def insert_chunks(conn: sqlite3.Connection, document_id: int, chunks: Iterable[C
     and the chunker is deterministic — there's no value in
     diffing old vs. new.
 
-    Returns the number of chunks inserted.
+    Returns the list of chunk row ids in insertion order (i.e. in
+    the same order as ``chunks``). Callers that need to write
+    embeddings for those chunks use the ids directly.
     """
     chunks_list = list(chunks)
     now_ns = time.time_ns()
     with conn:
         delete_chunks_for_document(conn, document_id)
         if not chunks_list:
-            return 0
+            return []
         rows = [
             (
                 document_id,
@@ -67,13 +69,38 @@ def insert_chunks(conn: sqlite3.Connection, document_id: int, chunks: Iterable[C
             """,
             rows,
         )
-    return len(chunks_list)
+    # ``executemany`` does not populate ``lastrowid`` consistently.
+    # Re-query by (document_id, position) which is unique. The chunk
+    # list is in insertion order, and ``position`` is monotonically
+    # increasing per document.
+    if not chunks_list:
+        return []
+    placeholders = ",".join("?" * len(chunks_list))
+    id_rows = conn.execute(
+        f"""
+        SELECT id, position FROM chunks
+        WHERE document_id = ? AND position IN ({placeholders})
+        ORDER BY position
+        """,
+        (document_id, *[c.position for c in chunks_list]),
+    ).fetchall()
+    return [int(row[0]) for row in id_rows]
 
 
-def delete_chunks_for_document(conn: sqlite3.Connection, document_id: int) -> int:
-    """Remove all chunks for a document. Returns the rowcount."""
-    cursor = conn.execute("DELETE FROM chunks WHERE document_id = ?", (document_id,))
-    return int(cursor.rowcount or 0)
+def delete_chunks_for_document(conn: sqlite3.Connection, document_id: int) -> list[int]:
+    """Remove all chunks for a document and return the deleted chunk ids.
+
+    Returns the list of ``chunks.id`` that were removed (empty list
+    if the document had no chunks). Callers use these ids to drop
+    the matching rows from :class:`SqliteVecStore`.
+    """
+    rows = conn.execute(
+        "SELECT id FROM chunks WHERE document_id = ?", (document_id,)
+    ).fetchall()
+    ids = [int(r[0]) for r in rows]
+    if ids:
+        conn.execute("DELETE FROM chunks WHERE document_id = ?", (document_id,))
+    return ids
 
 
 def iter_chunks_for_document(conn: sqlite3.Connection, document_id: int) -> list[Chunk]:
