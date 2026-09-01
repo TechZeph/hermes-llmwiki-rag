@@ -80,7 +80,14 @@ def main(log_level: str | None, log_format: str | None) -> None:
 @click.option(
     "--watch/--no-watch",
     default=False,
-    help="Watch the vault for changes and re-index (Phase 1: not yet implemented)",
+    help="After indexing, keep watching the vault and re-index on changes (coalesced)",
+)
+@click.option(
+    "--debounce",
+    default=2.0,
+    show_default=True,
+    type=float,
+    help="Seconds of quiet before a watch-triggered reindex",
 )
 @click.option(
     "--embed/--no-embed",
@@ -92,6 +99,7 @@ def index(
     db: Path | None,
     mode: str,
     watch: bool,
+    debounce: float,
     embed: bool,
 ) -> None:
     """Index a vault into the local SQLite database.
@@ -102,8 +110,6 @@ def index(
     and re-run safely). After that, unchanged reindexes are sub-second
     and search queries are ~30ms end-to-end.
     """
-    if watch:
-        click.echo("--watch is not yet implemented (Phase 1); running one pass.", err=True)
     settings = _resolve_settings(vault=vault, db=db, watch=False, require_vault=True)
     click.echo(f"indexing: vault={settings.vault_path} db={settings.db_path} mode={mode}")
     embedder = None
@@ -140,6 +146,18 @@ def index(
     # ``Indexer.run`` (one connection per run) so the store's lifetime
     # is naturally bounded by the run. The CLI only owns the
     # embedder; the store is constructed lazily.
+    if watch:
+        from .watch import watch_vault
+
+        if mode == "full":
+            Indexer(settings, embedder=embedder).run(mode="full")
+        click.echo("watching for changes; press Ctrl-C to stop", err=True)
+        try:
+            runs = watch_vault(settings, embedder=embedder, debounce_s=debounce, initial_run=True)
+        except KeyboardInterrupt:
+            runs = -1
+        click.echo(f"watch stopped after {runs} run(s)" if runs >= 0 else "watch stopped", err=True)
+        return
     indexer = Indexer(settings, embedder=embedder)
     stats = indexer.run(mode=mode)
     click.echo(

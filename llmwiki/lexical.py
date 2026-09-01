@@ -144,8 +144,19 @@ class LexicalIndex(ABC):
     """Abstract lexical index (BM25 over chunk text)."""
 
     @abstractmethod
-    def search(self, query: str, top_k: int, *, profile: str = "all") -> list[tuple[int, float]]:
-        """Return ``(chunk_id, score)`` pairs, best first; larger score is better."""
+    def search(
+        self,
+        query: str,
+        top_k: int,
+        *,
+        profile: str = "all",
+        document_ids: set[int] | None = None,
+    ) -> list[tuple[int, float]]:
+        """Return ``(chunk_id, score)`` pairs, best first; larger score is better.
+
+        ``document_ids`` widens the profile to an explicit document set
+        (graph-expanded profiles); ``None`` means the profile predicate alone.
+        """
 
     @abstractmethod
     def count(self) -> int:
@@ -162,13 +173,24 @@ class Fts5Index(LexicalIndex):
         row = self._conn.execute(f"SELECT COUNT(*) FROM {FTS_TABLE}").fetchone()
         return int(row[0]) if row else 0
 
-    def search(self, query: str, top_k: int, *, profile: str = "all") -> list[tuple[int, float]]:
+    def search(
+        self,
+        query: str,
+        top_k: int,
+        *,
+        profile: str = "all",
+        document_ids: set[int] | None = None,
+    ) -> list[tuple[int, float]]:
         if top_k <= 0:
             return []
         match = build_match_query(query)
         if not match:
             return []
         predicate, params = profile_predicate(profile, alias="d")
+        if document_ids:
+            ids = sorted(document_ids)[:900]
+            predicate = f"({predicate} OR d.id IN ({','.join('?' * len(ids))}))"
+            params = [*params, *ids]
         weights = ", ".join(str(w) for w in FTS_COLUMN_WEIGHTS)
         rows = self._conn.execute(
             f"""

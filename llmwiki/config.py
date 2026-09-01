@@ -98,6 +98,10 @@ class Settings:
     """Per-channel RRF weights selected on the dev split; 1.0/1.0 is plain RRF."""
     query_recipe: str = "query-v2-bge-instruction"
     """Query embedding recipe id, selected on dev (see ``llmwiki.recipes.QUERY_RECIPES``)."""
+    project_graph_expansion: bool = True
+    project_graph_hops: int = 1
+    project_graph_max_linked: int = 40
+    """``project:<id>`` admits curated pages linked from the workspace (V2, measured)."""
     context_budget_tokens: int = 1500
     context_per_document_tokens: int = 600
     context_max_excerpts: int = 8

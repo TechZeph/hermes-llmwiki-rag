@@ -30,6 +30,7 @@ from .citations import ContextBlock, build_context
 from .config import Settings
 from .corpus import profile_matches, profile_predicate
 from .embeddings import Embedder
+from .graph import project_scope_document_ids
 from .hybrid import diversify, reciprocal_rank_fusion
 from .lexical import Fts5Index, LexicalIndex
 from .models import Candidate, RetrievalResult
@@ -91,18 +92,19 @@ def _profile_metadata(
         placeholders = ",".join("?" * len(batch))
         rows = conn.execute(
             f"""
-            SELECT c.id, d.source_kind, d.page_role, d.project_id, d.is_route_map
+            SELECT c.id, d.source_kind, d.page_role, d.project_id, d.is_route_map, d.id
             FROM chunks c JOIN documents d ON d.id = c.document_id
             WHERE c.id IN ({placeholders})
             """,
             batch,
         ).fetchall()
-        for chunk_id, source_kind, page_role, project_id, is_route_map in rows:
+        for chunk_id, source_kind, page_role, project_id, is_route_map, doc_id in rows:
             out[int(chunk_id)] = {
                 "source_kind": str(source_kind),
                 "page_role": str(page_role),
                 "project_id": str(project_id) if project_id is not None else None,
                 "is_route_map": bool(is_route_map),
+                "document_id": int(doc_id),
             }
     return out
 
@@ -158,6 +160,7 @@ class Retriever:
         # The vec0 table cannot filter on document metadata inside the KNN
         # query, so over-fetch and filter. Widen progressively rather than
         # always scanning the whole store.
+        scope = self._profile_scope(profile)
         fetch = min(total, max(top_k * 4, 64))
         while True:
             hits = self._vectors.search(q_vec, top_k=fetch)
@@ -165,7 +168,11 @@ class Retriever:
             kept = [
                 (cid, dist)
                 for cid, dist in hits
-                if (m := meta.get(cid)) is not None and profile_matches(profile, m)
+                if (m := meta.get(cid)) is not None
+                and (
+                    profile_matches(profile, m)
+                    or (scope is not None and m.get("document_id") in scope)
+                )
             ]
             if len(kept) >= top_k or fetch >= total or len(hits) < fetch:
                 return kept[:top_k]
@@ -174,7 +181,20 @@ class Retriever:
     def lexical_channel(self, query: str, *, profile: str, top_k: int) -> list[tuple[int, float]]:
         """Profile-filtered BM25 hits as ``(chunk_id, score)``, larger is better."""
         profile_predicate(profile)  # validate early with the same error text
-        return self._lexical.search(query, top_k, profile=profile)
+        return self._lexical.search(
+            query, top_k, profile=profile, document_ids=self._profile_scope(profile)
+        )
+
+    def _profile_scope(self, profile: str) -> set[int] | None:
+        """Explicit document-id scope for graph-expanded profiles, else ``None``."""
+        if not profile.startswith("project:") or not self._settings.project_graph_expansion:
+            return None
+        return project_scope_document_ids(
+            self._conn,
+            profile.removeprefix("project:"),
+            hops=self._settings.project_graph_hops,
+            max_linked=self._settings.project_graph_max_linked,
+        )
 
     # --- pipeline -----------------------------------------------------------
 

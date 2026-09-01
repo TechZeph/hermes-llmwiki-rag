@@ -33,6 +33,7 @@ from .chunks import delete_chunks_for_document, insert_chunks
 from .config import Settings
 from .corpus import classify_path
 from .embeddings import Embedder, model_provenance
+from .graph import replace_document_links, resolve_links
 from .logging import get_logger
 from .models import Document, IndexRunStats
 from .parser import ParsedDocument, parse_markdown
@@ -443,6 +444,13 @@ class Indexer:
                             old_ids = delete_chunks_for_document(conn, doc_id)
                             cleanup_store.delete(old_ids)
                         ids = _chunk_and_persist(conn, doc_id, parsed)
+                        replace_document_links(
+                            conn,
+                            doc_id,
+                            path=doc.path,
+                            aliases=doc.aliases,
+                            wikilinks=doc.wikilinks,
+                        )
                         n = 0
                         if vector_store is not None:
                             assert self.embedder is not None  # invariant: pair
@@ -473,6 +481,10 @@ class Indexer:
 
             chunks_removed += _delete_missing_chunks(conn, seen_paths)
             removed = _delete_missing(conn, seen_paths)
+            with dbmod.transaction(conn):
+                links_resolved = resolve_links(conn)
+            if links_resolved:
+                logger.info("resolved %d wikilink(s)", links_resolved)
             _finish_run(
                 conn,
                 run_id,
@@ -823,6 +835,12 @@ def summarise_database(db_path: Path) -> dict[str, object]:
         except sqlite3.OperationalError:
             # Pre-Phase-3 database without the embeddings table.
             embeddings = 0
+        try:
+            from .graph import graph_summary
+
+            graph = graph_summary(conn)
+        except sqlite3.OperationalError:
+            graph = {"links": 0, "resolved": 0, "unresolved": 0}
         last_run_row = conn.execute(
             "SELECT started_at_ns, finished_at_ns, mode, documents_added, "
             "documents_updated, documents_removed, documents_skipped "
@@ -834,6 +852,7 @@ def summarise_database(db_path: Path) -> dict[str, object]:
         "documents": documents,
         "chunks": chunks,
         "embeddings": embeddings,
+        "graph": graph,
         "runs": runs,
         "last_run": dict(
             zip(

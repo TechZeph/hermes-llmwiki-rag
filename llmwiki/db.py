@@ -28,7 +28,7 @@ from .logging import get_logger
 
 logger = get_logger("db")
 
-_SCHEMA_VERSION: Final = 6
+_SCHEMA_VERSION: Final = 7
 
 # sqlite-vec needs the embedding dimension as a schema literal. The
 # plan locks BGE-small-en-v1.5 (384-dim). If we ever swap models we
@@ -237,6 +237,44 @@ def _migrate_v5_to_v6(conn: sqlite3.Connection) -> None:
     Fts5Index(conn).rebuild()
 
 
+def _migrate_v6_to_v7(conn: sqlite3.Connection) -> None:
+    """Add the resolved wikilink graph projection (links + lookup keys)."""
+    for statement in (
+        """CREATE TABLE IF NOT EXISTS links (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            source_document_id INTEGER NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+            target_document_id INTEGER REFERENCES documents(id) ON DELETE SET NULL,
+            target_text TEXT NOT NULL,
+            target_key TEXT NOT NULL,
+            target_path_hint TEXT
+        )""",
+        "CREATE INDEX IF NOT EXISTS idx_links_source ON links(source_document_id)",
+        "CREATE INDEX IF NOT EXISTS idx_links_target ON links(target_document_id)",
+        "CREATE INDEX IF NOT EXISTS idx_links_key ON links(target_key)",
+        """CREATE TABLE IF NOT EXISTS link_keys (
+            document_id INTEGER NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+            key TEXT NOT NULL,
+            PRIMARY KEY (document_id, key)
+        )""",
+        "CREATE INDEX IF NOT EXISTS idx_link_keys_key ON link_keys(key)",
+    ):
+        conn.execute(statement)
+    # Backfill from persisted document metadata; resolution runs on the next index.
+    from .graph import replace_document_links
+
+    rows = conn.execute("SELECT id, path, aliases_json, wikilinks_json FROM documents").fetchall()
+    import json as _json
+
+    for doc_id, path, aliases_json, wikilinks_json in rows:
+        replace_document_links(
+            conn,
+            int(doc_id),
+            path=str(path),
+            aliases=[str(a) for a in _json.loads(str(aliases_json or "[]"))],
+            wikilinks=[str(w) for w in _json.loads(str(wikilinks_json or "[]"))],
+        )
+
+
 Migration = Callable[[sqlite3.Connection], None]
 _MIGRATIONS: dict[int, Migration] = {
     0: _migrate_v0_to_v1,
@@ -245,6 +283,7 @@ _MIGRATIONS: dict[int, Migration] = {
     3: _migrate_v3_to_v4,
     4: _migrate_v4_to_v5,
     5: _migrate_v5_to_v6,
+    6: _migrate_v6_to_v7,
 }
 
 
@@ -259,6 +298,8 @@ def clear_projection(conn: sqlite3.Connection) -> None:
         conn.execute("DELETE FROM chunk_embeddings")
         conn.execute("DELETE FROM chunks_fts")
         conn.execute("DELETE FROM chunks")
+        conn.execute("DELETE FROM links")
+        conn.execute("DELETE FROM link_keys")
         conn.execute("DELETE FROM documents")
         conn.execute("DELETE FROM index_runs")
         conn.execute("DELETE FROM projection_meta")
@@ -379,6 +420,25 @@ def inspect_integrity(db_path: Path, *, vault_path: Path | None = None) -> dict[
                     "SELECT COUNT(*) FROM chunks WHERE id NOT IN (SELECT rowid FROM chunks_fts)"
                 ).fetchone()[0]
             )
+        links_present = (
+            conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'links'"
+            ).fetchone()
+            is not None
+        )
+        orphan_links = 0
+        unresolved_links = 0
+        if links_present:
+            orphan_links = int(
+                conn.execute(
+                    "SELECT COUNT(*) FROM links WHERE source_document_id NOT IN (SELECT id FROM documents)"
+                ).fetchone()[0]
+            )
+            unresolved_links = int(
+                conn.execute(
+                    "SELECT COUNT(*) FROM links WHERE target_document_id IS NULL"
+                ).fetchone()[0]
+            )
         models = [
             str(row[0])
             for row in conn.execute(
@@ -399,6 +459,7 @@ def inspect_integrity(db_path: Path, *, vault_path: Path | None = None) -> dict[
         and not orphan_chunks
         and not orphan_fts_rows
         and not chunks_without_fts
+        and not orphan_links
         and not missing_on_disk
         and len(models) <= 1
         and rebuild_state not in {"in_progress", "failed"}
@@ -414,6 +475,8 @@ def inspect_integrity(db_path: Path, *, vault_path: Path | None = None) -> dict[
         "chunks_without_embeddings": chunks_without_embeddings,
         "orphan_fts_rows": orphan_fts_rows,
         "chunks_without_fts": chunks_without_fts,
+        "orphan_links": orphan_links,
+        "unresolved_links": unresolved_links,
         "documents_missing_on_disk": missing_on_disk,
         "embedding_models": models,
         "mixed_embedding_models": len(models) > 1,

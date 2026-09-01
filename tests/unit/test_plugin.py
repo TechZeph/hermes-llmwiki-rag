@@ -145,7 +145,7 @@ def test_status_tool_reports_projection_without_paths(vault_and_db) -> None:
     status = json.loads(handlers.status({}))
     assert status["configured"] is True
     assert status["vault"] == vault.name
-    assert status["integrity"]["ok"] is True and status["integrity"]["schema_version"] == 6
+    assert status["integrity"]["ok"] is True and status["integrity"]["schema_version"] == 7
     assert (
         status["counts"]["documents"] > 0
         and status["counts"]["chunks_fts"] == status["counts"]["chunks"]

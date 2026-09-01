@@ -203,3 +203,23 @@ held-out; profile accuracy 0.69 / 0.67 (the router prefers a project
 profile whenever a project name appears, which the golden set does not
 always want); every no-answer question is routed to retrieval, which is
 expected because abstention is the gate's job, not the router's.
+
+### 2026-09-01 — V2 graph expansion for `project:<id>` (shipped, no regression)
+
+Schema v7 projects every page's wikilinks into a `links` table inside the
+document transaction and resolves them at the end of each run (live
+vault: 3,131 links, 3,110 resolved; the 21 unresolved are template
+placeholders and config-key pseudo-links). `project:<id>` now admits
+curated wiki pages linked from the workspace (1 hop, ≤ 40 pages; logs,
+route maps, raw sources and idea drops are never admitted).
+
+Regression rule check (same corpus fingerprint, same golden version):
+
+| split | variant | hit@5 | recall@10 | MRR | nDCG@10 | authority@1 |
+|---|---|---|---|---|---|---|
+| heldout | hybrid, before expansion | 0.939 | 0.889 | 0.836 | 0.818 | 0.879 |
+| heldout | hybrid, with expansion | 0.939 | 0.889 | 0.836 | 0.818 | 0.879 |
+| dev | hybrid, with expansion | 0.986 | 0.872 | 0.889 | 0.832 | 0.942 |
+
+Identical held-out metrics; the four held-out project-profile questions
+keep hit@5 1.00 / MRR 0.81. Expansion stays on (`project_graph_expansion`).

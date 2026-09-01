@@ -95,15 +95,19 @@ def replace_document_links(
     return len(rows)
 
 
-def _resolve_path_hint(
-    hint: str, source_path: str, by_path: dict[str, int]
-) -> int | None:
+def _resolve_path_hint(hint: str, source_path: str, by_path: dict[str, int]) -> int | None:
     source_dir = posixpath.dirname(source_path)
     candidates = [posixpath.normpath(posixpath.join(source_dir, hint)).lower(), hint]
     for cand in candidates:
         cand = cand.strip("/")
         if cand in by_path:
             return by_path[cand]
+    # Obsidian also accepts a trailing path fragment ("projects/other/architecture"
+    # for "wiki/projects/other/architecture"); prefer the shortest matching path.
+    suffix = "/" + hint.strip("/")
+    matches = sorted((path for path in by_path if path.endswith(suffix)), key=len)
+    if matches:
+        return by_path[matches[0]]
     return None
 
 
@@ -140,7 +144,9 @@ def resolve_links(conn: sqlite3.Connection) -> int:
                 src_dir = dir_of.get(source_id, "")
                 src_project = project_of.get(source_id)
 
-                def rank(d: int) -> tuple[int, int, int]:
+                def rank(
+                    d: int, *, src_dir: str = src_dir, src_project: str | None = src_project
+                ) -> tuple[int, int, int]:
                     return (
                         0 if dir_of.get(d) == src_dir else 1,
                         0 if src_project and project_of.get(d) == src_project else 1,
@@ -247,7 +253,9 @@ def project_scope_document_ids(
 def graph_summary(conn: sqlite3.Connection) -> dict[str, int]:
     total = int(conn.execute("SELECT COUNT(*) FROM links").fetchone()[0])
     resolved = int(
-        conn.execute("SELECT COUNT(*) FROM links WHERE target_document_id IS NOT NULL").fetchone()[0]
+        conn.execute("SELECT COUNT(*) FROM links WHERE target_document_id IS NOT NULL").fetchone()[
+            0
+        ]
     )
     return {"links": total, "resolved": resolved, "unresolved": total - resolved}
 
