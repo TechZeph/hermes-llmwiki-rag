@@ -18,6 +18,12 @@ provides_hooks:
   - on_session_start
 python_dependencies:
   - "hermes-llmwiki-rag>=0.1,<0.2"
+hermes:
+  # Declared compatibility range. Tested: 0.20.6 (source 2026.8.27) locally;
+  # CI runs plugin doctor on the lower bound tag and on main.
+  min_version: "0.20.6"
+  tested: ["0.20.6"]
+  api_version: 1
 config_schema:
   vault:
     type: str
