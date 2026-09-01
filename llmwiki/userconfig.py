@@ -27,9 +27,9 @@ def config_path() -> Path:
     override = os.environ.get("LLMWIKI_CONFIG")
     if override:
         return Path(override).expanduser()
-    base = os.environ.get("XDG_CONFIG_HOME")
-    root = Path(base) if base else Path.home() / ".config"
-    return root / "llmwiki" / "config.toml"
+    from .sysinfo import user_config_dir
+
+    return user_config_dir() / "config.toml"
 
 
 def load_user_config(path: Path | None = None) -> dict[str, str]:

@@ -589,7 +589,6 @@ def search(
 @click.option("--json", "as_json", is_flag=True)
 def bench(vault: Path | None, db: Path | None, queries: int, as_json: bool) -> None:
     """Measure no-change reindex time, retrieval latency per mode, and peak RSS."""
-    import resource
     import statistics
     import time as _time
 
@@ -640,7 +639,7 @@ def bench(vault: Path | None, db: Path | None, queries: int, as_json: bool) -> N
         "reindex_no_change_s": round(reindex_s, 2),
         "reindex_seen": stats.documents_seen,
         "latency": latencies,
-        "peak_rss_mb": round(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024.0, 1),
+        "peak_rss_mb": __import__("llmwiki.sysinfo", fromlist=["peak_rss_mb"]).peak_rss_mb(),
         "counts": counts,
     }
     if as_json:

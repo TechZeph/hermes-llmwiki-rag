@@ -137,6 +137,10 @@ def find_obsidian() -> str | None:
             return found
     if sys.platform == "darwin" and Path("/Applications/Obsidian.app").exists():
         return "open -a Obsidian"
+    if os.name == "nt":
+        local = os.environ.get("LOCALAPPDATA")
+        if local and (Path(local) / "Programs" / "Obsidian" / "Obsidian.exe").exists():
+            return str(Path(local) / "Programs" / "Obsidian" / "Obsidian.exe")
     if Path("/snap/bin/obsidian").exists():
         return "/snap/bin/obsidian"
     flatpak = shutil.which("flatpak")
@@ -167,6 +171,12 @@ def open_in_obsidian(vault: Path, *, launcher: str | None = None) -> bool:
     launcher = launcher or find_obsidian()
     if not launcher:
         return False
+    if os.name == "nt":
+        try:
+            os.startfile(obsidian_open_command(launcher, vault)[-1])  # type: ignore[attr-defined]
+            return True
+        except OSError:
+            return False
     try:
         subprocess.Popen(
             obsidian_open_command(launcher, vault),

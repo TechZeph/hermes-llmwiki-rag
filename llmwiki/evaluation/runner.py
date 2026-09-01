@@ -5,7 +5,6 @@ from __future__ import annotations
 import hashlib
 import json
 import platform
-import resource
 import sqlite3
 import subprocess
 import time
@@ -101,8 +100,9 @@ def projection_snapshot(conn: sqlite3.Connection) -> dict[str, Any]:
 
 
 def _peak_rss_mb() -> float:
-    kb = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
-    return round(kb / 1024.0, 1)
+    from ..sysinfo import peak_rss_mb
+
+    return peak_rss_mb()
 
 
 def _citation_checks(vault: Path | None, candidates: Sequence[Candidate]) -> list[bool]:

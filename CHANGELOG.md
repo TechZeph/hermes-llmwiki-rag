@@ -50,5 +50,7 @@ its Hermes plugin.
 
 ### Compatibility
 
-- Python 3.11 – 3.14. Hermes Agent 0.20.6 (source 2026.8.27) tested; see
-  `hermes_plugin/plugin.yaml`.
+- Python 3.11 – 3.14 on Linux and macOS; Windows for the CLI and MCP server
+  (`install.ps1`, `%APPDATA%`/`%LOCALAPPDATA%` locations, no POSIX-only
+  imports; permission hardening is POSIX-only and warns elsewhere). Hermes
+  Agent 0.20.6 (source 2026.8.27) tested; on Windows Hermes runs under WSL.

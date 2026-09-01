@@ -34,6 +34,7 @@ _SCHEMA_VERSION: Final = 8
 # plan locks BGE-small-en-v1.5 (384-dim). If we ever swap models we
 # drop and recreate the vec0 table via a future migration.
 _EMBEDDING_DIM: Final = 384
+_POSIX = os.name == "posix"
 _PRIVATE_DIRECTORY_MODE: Final = 0o700
 _PRIVATE_FILE_MODE: Final = 0o600
 _UMASK_LOCK = threading.Lock()
@@ -53,10 +54,10 @@ def _projection_files(db_path: Path) -> tuple[Path, Path, Path]:
 
 def _secure_projection_storage(db_path: Path) -> None:
     """Create or repair private POSIX permissions for projection storage."""
-    if os.name != "posix":
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    if not _POSIX:
         logger.warning("projection permissions are not verified on this platform")
         return
-    db_path.parent.mkdir(parents=True, exist_ok=True)
     os.chmod(db_path.parent, _PRIVATE_DIRECTORY_MODE)
     fd = os.open(db_path, os.O_RDWR | os.O_CREAT, _PRIVATE_FILE_MODE)
     os.close(fd)
@@ -68,7 +69,7 @@ def _secure_projection_storage(db_path: Path) -> None:
 @contextmanager
 def _private_umask() -> Iterator[None]:
     """Keep SQLite-created WAL sidecars private while they are created."""
-    if os.name != "posix":
+    if not _POSIX:
         yield
         return
     with _UMASK_LOCK:

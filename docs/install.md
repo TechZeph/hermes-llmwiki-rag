@@ -28,6 +28,23 @@ Environment overrides: `LLMWIKI_INSTALL_DIR`, `LLMWIKI_BIN_DIR`, `PYTHON`,
 and `init` says so (and offers to open a new starter vault in it when it is
 installed).
 
+## Windows
+
+Native Windows is supported for the CLI and the MCP server with Python 3.11+
+from python.org (its sqlite3 ships FTS5; sqlite-vec, onnxruntime, FastEmbed and
+watchdog publish Windows wheels):
+
+```powershell
+irm https://raw.githubusercontent.com/TechZeph/hermes-llmwiki-rag/main/install.ps1 | iex
+```
+
+Config lives in `%APPDATA%\llmwiki\config.toml` and the projection in
+`%LOCALAPPDATA%\llmwiki\llmwiki.sqlite`. Projection file permissions are
+not enforced on Windows (a warning says so); keep the data directory in a
+user-only location. Hermes itself runs on Windows through WSL, so for the
+plugin use `install.sh --hermes` inside WSL. CI runs the test suite on
+`windows-latest`.
+
 ## Standalone CLI
 
 ```bash

@@ -31,6 +31,26 @@ jobs:
       - name: Tests (no network: FastEmbed is never loaded by the suite)
         run: pytest -q -p no:cacheprovider
 
+  windows:
+    name: test (windows, py3.12)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[dev,mcp]"
+      - name: Tests (POSIX-only permission tests skip themselves)
+        run: pytest -q -p no:cacheprovider
+      - name: Installer syntax and dry run
+        shell: pwsh
+        run: |
+          $env:LLMWIKI_INSTALL_DIR = "$env:TEMP\llmwiki-venv"
+          .\install.ps1 -DryRun -NoInit
+
   package:
     name: build and verify wheel
     runs-on: ubuntu-latest

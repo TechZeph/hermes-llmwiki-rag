@@ -241,3 +241,30 @@ def test_install_script_dry_run(tmp_path: Path) -> None:
         env=env,
     )
     assert hermes.returncode == 1 and "Hermes venv not found" in hermes.stderr
+
+
+def test_windows_style_paths_and_non_posix_projection(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from llmwiki import db as dbmod
+    from llmwiki.sysinfo import peak_rss_mb, user_config_dir, user_data_dir
+
+    assert peak_rss_mb() >= 0.0
+    monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
+    monkeypatch.delenv("XDG_DATA_HOME", raising=False)
+    import llmwiki.sysinfo as sysinfo
+
+    monkeypatch.setattr(sysinfo, "_IS_POSIX", False)
+    monkeypatch.setattr(sysinfo, "_IS_WINDOWS", True)
+    monkeypatch.setattr(dbmod, "_POSIX", False)
+    monkeypatch.setenv("APPDATA", str(tmp_path / "AppData" / "Roaming"))
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "AppData" / "Local"))
+    assert user_config_dir() == tmp_path / "AppData" / "Roaming" / "llmwiki"
+    assert user_data_dir() == tmp_path / "AppData" / "Local" / "llmwiki"
+    # Non-POSIX path still creates the projection directory before connecting.
+    db_path = tmp_path / "AppData" / "Local" / "llmwiki" / "llmwiki.sqlite"
+    with dbmod.connect(db_path) as conn:
+        dbmod.init_schema(conn)
+        assert conn.execute("SELECT COUNT(*) FROM documents").fetchone()[0] == 0
+    assert db_path.exists()
+    assert peak_rss_mb() >= 0.0  # nt branch without psapi on Linux returns 0.0

@@ -30,16 +30,10 @@ def _env_int(name: str, default: int) -> int:
 
 
 def _default_user_data_dir() -> Path:
-    """Return the per-user data directory for the RAG.
+    """Per-user data directory (XDG on POSIX, ``%LOCALAPPDATA%`` on Windows)."""
+    from .sysinfo import user_data_dir
 
-    Honours ``XDG_DATA_HOME`` when set (Linux freedesktop standard);
-    otherwise falls back to ``~/.local/share/llmwiki``. The directory
-    is created on first use, not here.
-    """
-    xdg = os.environ.get("XDG_DATA_HOME")
-    if xdg:
-        return Path(xdg) / "llmwiki"
-    return Path.home() / ".local" / "share" / "llmwiki"
+    return user_data_dir()
 
 
 _UNSET_VAULT = Path("/nonexistent/llmwiki-vault-not-configured")
