@@ -30,3 +30,8 @@ Rules:
 - `mode: abstain` questions have `relevant: []` and `authority_class: none`.
 - `ambiguity` questions list every page a reasonable reader could mean.
 - Roughly 30% of every category is `heldout`; the rest is `dev`.
+
+Location policy: the public repository contains only this schema and the
+synthetic `sample-vault.json` (paired with `evals/sample-vault/`). Real-vault
+sets live under `private/evals/golden/` and are git-ignored because they quote
+a personal vault. Run records default to `evals/runs/`, which is git-ignored.

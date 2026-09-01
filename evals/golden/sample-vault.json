@@ -1,0 +1,247 @@
+{
+  "corpus": "sample-vault",
+  "version": "sample-v1",
+  "purpose": "Tiny public example of the golden-set schema against evals/sample-vault. Real-vault sets live outside the public repo.",
+  "questions": [
+    {
+      "id": "s-cs-001",
+      "category": "current-state",
+      "split": "dev",
+      "query": "what is the current status of sqlite-vec in the rag project?",
+      "profile": "project:rag",
+      "authority_class": "current-state",
+      "mode": "retrieve",
+      "relevant": [
+        {
+          "path": "wiki/projects/rag/current-state.md",
+          "sections": [
+            "Status"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "s-dec-001",
+      "category": "decision",
+      "split": "heldout",
+      "query": "why did we choose sqlite-vec instead of faiss?",
+      "profile": "project:rag",
+      "authority_class": "decision",
+      "mode": "retrieve",
+      "relevant": [
+        {
+          "path": "wiki/projects/rag/decisions.md"
+        }
+      ]
+    },
+    {
+      "id": "s-term-001",
+      "category": "exact-term",
+      "split": "dev",
+      "query": "vec0 float[384] table",
+      "profile": "answer",
+      "authority_class": "durable",
+      "mode": "retrieve",
+      "relevant": [
+        {
+          "path": "wiki/sqlite-vec.md",
+          "sections": [
+            "Storage"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "s-con-001",
+      "category": "concept",
+      "split": "heldout",
+      "query": "why does memory grow with the biggest batch ever embedded?",
+      "profile": "answer",
+      "authority_class": "durable",
+      "mode": "retrieve",
+      "relevant": [
+        {
+          "path": "wiki/fastembed.md",
+          "sections": [
+            "Memory"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "s-ev-001",
+      "category": "evidence",
+      "split": "dev",
+      "query": "what does the RRF paper say about Condorcet?",
+      "profile": "evidence",
+      "authority_class": "evidence",
+      "mode": "retrieve",
+      "relevant": [
+        {
+          "path": "raw/papers/rrf-paper.md"
+        }
+      ]
+    },
+    {
+      "id": "s-chr-001",
+      "category": "chronology",
+      "split": "heldout",
+      "query": "when did sqlite-vec storage land?",
+      "profile": "history",
+      "authority_class": "log",
+      "mode": "retrieve",
+      "relevant": [
+        {
+          "path": "wiki/log.md"
+        }
+      ]
+    },
+    {
+      "id": "s-amb-001",
+      "category": "ambiguity",
+      "split": "dev",
+      "query": "embeddings storage",
+      "profile": "answer",
+      "authority_class": "durable",
+      "mode": "retrieve",
+      "relevant": [
+        {
+          "path": "wiki/sqlite-vec.md"
+        },
+        {
+          "path": "wiki/fastembed.md"
+        }
+      ]
+    },
+    {
+      "id": "s-na-001",
+      "category": "no-answer",
+      "split": "heldout",
+      "query": "which GPU does the vault recommend for training?",
+      "profile": "answer",
+      "authority_class": "none",
+      "mode": "abstain",
+      "relevant": []
+    },
+    {
+      "id": "s-cs-002",
+      "category": "current-state",
+      "split": "heldout",
+      "query": "how many vectors does the projection hold right now?",
+      "profile": "answer",
+      "authority_class": "current-state",
+      "mode": "retrieve",
+      "relevant": [
+        {
+          "path": "wiki/projects/rag/current-state.md"
+        }
+      ]
+    },
+    {
+      "id": "s-dec-002",
+      "category": "decision",
+      "split": "dev",
+      "query": "rationale for keeping embeddings inside SQLite",
+      "profile": "answer",
+      "authority_class": "decision",
+      "mode": "retrieve",
+      "relevant": [
+        {
+          "path": "wiki/projects/rag/decisions.md",
+          "sections": [
+            "[2026-08-30] storage"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "s-term-002",
+      "category": "exact-term",
+      "split": "heldout",
+      "query": "BAAI/bge-small-en-v1.5 dimensions",
+      "profile": "answer",
+      "authority_class": "durable",
+      "mode": "retrieve",
+      "relevant": [
+        {
+          "path": "wiki/fastembed.md",
+          "sections": [
+            "Models"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "s-con-002",
+      "category": "concept",
+      "split": "dev",
+      "query": "what limit applies to nearest-neighbour queries?",
+      "profile": "answer",
+      "authority_class": "durable",
+      "mode": "retrieve",
+      "relevant": [
+        {
+          "path": "wiki/sqlite-vec.md",
+          "sections": [
+            "Limits"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "s-ev-002",
+      "category": "evidence",
+      "split": "heldout",
+      "query": "is there a raw idea about storing image embeddings?",
+      "profile": "evidence",
+      "authority_class": "idea",
+      "mode": "retrieve",
+      "relevant": [
+        {
+          "path": "Clippings/ideas/vector-idea.md"
+        }
+      ]
+    },
+    {
+      "id": "s-chr-002",
+      "category": "chronology",
+      "split": "dev",
+      "query": "what happened on 2026-08-30?",
+      "profile": "history",
+      "authority_class": "log",
+      "mode": "retrieve",
+      "relevant": [
+        {
+          "path": "wiki/log.md"
+        }
+      ]
+    },
+    {
+      "id": "s-amb-002",
+      "category": "ambiguity",
+      "split": "heldout",
+      "query": "the 384 number",
+      "profile": "answer",
+      "authority_class": "durable",
+      "mode": "retrieve",
+      "relevant": [
+        {
+          "path": "wiki/sqlite-vec.md"
+        },
+        {
+          "path": "wiki/fastembed.md"
+        }
+      ]
+    },
+    {
+      "id": "s-na-002",
+      "category": "no-answer",
+      "split": "dev",
+      "query": "what reranker model was chosen for production?",
+      "profile": "answer",
+      "authority_class": "none",
+      "mode": "abstain",
+      "relevant": []
+    }
+  ]
+}

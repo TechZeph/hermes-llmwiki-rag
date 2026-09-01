@@ -4,7 +4,7 @@ Produced by `scripts/clean-install-check.sh` on 2026-09-01 against Hermes Agent 
 
 ```
 == work dir: /tmp/llmwiki-clean-ic0VWg
-== hermes source: /home/ai-workstation/.hermes/hermes-agent (2a598aad1)
+== hermes source: ~/.hermes/hermes-agent (2a598aad1)
 [1m* Creating isolated environment: venv+pip...[0m
 [1m* Installing packages in isolated environment:[0m
   - setuptools>=68
@@ -30,7 +30,7 @@ done: seen=3 added=3 updated=0 removed=0 skipped=0 chunks: +4 ~0 -0 embeddings: 
 ok schema 8
 == doctor
 llmwiki plugin loaded without a usable vault setting; tools will report the problem
-Plugin Doctor: /home/ai-workstation/Workspace/repos/hermes-llmwiki-rag/hermes_plugin
+Plugin Doctor: ~/Workspace/repos/hermes-llmwiki-rag/hermes_plugin
   manifest: llmwiki 0.1.0 (backend)
   OK: runtime discovery, manifest parsing, import, and registration passed
   registrations: 4 tool(s), 2 hook(s)

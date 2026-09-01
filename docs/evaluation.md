@@ -5,9 +5,20 @@ which retrieval variant ships. The gates below were written before the
 first held-out run was recorded (see the git history of this file) so
 they cannot be tuned to the results.
 
+## Public and private evaluation assets
+
+The methodology, harness, metrics, gates and every recorded decision in
+this file are public. The real-vault golden sets (`clanker-vault-v1.json`,
+`clanker-vault-v2.json`, their drafts) and the recorded run records are
+private development assets under `private/` because they quote page
+paths, section titles and questions from a personal vault. The public
+repository ships `evals/sample-vault/` and `evals/golden/sample-vault.json`
+as a runnable example of the same schema, and `docs/benchmarks.md` carries
+the aggregate tables generated from the private runs.
+
 ## Golden set
 
-- File: `evals/golden/clanker-vault-v1.json`, schema in `evals/golden/README.md`.
+- File: `private/evals/golden/clanker-vault-v1.json`, schema in `evals/golden/README.md`.
 - 115 real-vault questions across eight categories: current-state,
   decision, exact-term, concept, evidence, chronology, ambiguity,
   no-answer. Every category has a `dev` and a `heldout` split
@@ -120,16 +131,16 @@ tolerance. The single-set rule still applies when only one set is run.
 
 ```bash
 # validate the set against the live vault
-.venv/bin/llmwiki eval validate --set evals/golden/clanker-vault-v1.json --vault ~/Workspace/vaults/clanker-vault
+.venv/bin/llmwiki eval validate --set private/evals/golden/clanker-vault-v1.json --vault ~/Workspace/vaults/clanker-vault
 
 # run the matrix on held-out
-.venv/bin/llmwiki eval run --set evals/golden/clanker-vault-v1.json \
+.venv/bin/llmwiki eval run --set private/evals/golden/clanker-vault-v1.json \
   --vault ~/Workspace/vaults/clanker-vault \
   --variant dense --variant lexical --variant hybrid --variant hybrid+rerank \
   --split heldout
 
 # compare recorded runs
-.venv/bin/llmwiki eval compare evals/runs/*.json
+.venv/bin/llmwiki eval compare private/evals/runs/*.json
 ```
 
 ## Recorded decisions
@@ -261,7 +272,7 @@ default; neither meets the "improves or matches" V2 rule.
 
 ### 2026-09-01 — Golden set v2 (paraphrased) and the channel mix
 
-`evals/golden/clanker-vault-v2.json`: 77 questions (26 held-out) phrased
+`private/evals/golden/clanker-vault-v2.json`: 77 questions (26 held-out) phrased
 the way a person types when they do not remember the wiki's wording:
 synonyms, casual requests, occasional typos, seven multi-part questions
 (category `ambiguity`, `multi-part` in notes). It complements v1, whose

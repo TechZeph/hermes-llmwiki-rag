@@ -117,14 +117,34 @@ is off by default and requires the shipped gate to be safety-certified.
 ## Evaluation
 
 ```bash
-.venv/bin/llmwiki eval validate --set evals/golden/clanker-vault-v1.json --vault ~/Workspace/vaults/clanker-vault
-.venv/bin/llmwiki eval run --set evals/golden/clanker-vault-v1.json --vault ~/Workspace/vaults/clanker-vault \
+.venv/bin/llmwiki eval validate --set private/evals/golden/clanker-vault-v1.json --vault ~/Workspace/vaults/clanker-vault
+.venv/bin/llmwiki eval run --set private/evals/golden/clanker-vault-v1.json --vault ~/Workspace/vaults/clanker-vault \
     --variant dense --variant lexical --variant hybrid --split heldout
 .venv/bin/llmwiki eval compare evals/runs/*.json
-.venv/bin/llmwiki eval calibrate --set evals/golden/clanker-vault-v1.json --vault ~/Workspace/vaults/clanker-vault
+.venv/bin/llmwiki eval calibrate --set private/evals/golden/clanker-vault-v1.json --vault ~/Workspace/vaults/clanker-vault
 ```
 
 Tune on `dev`, report `heldout`. Gates and recorded decisions: `docs/evaluation.md`.
+The real-vault golden sets and run records are private (see below); the public
+repo ships `evals/sample-vault/` with `evals/golden/sample-vault.json` so the
+harness runs end to end for anyone:
+
+```bash
+.venv/bin/llmwiki index --vault evals/sample-vault --db /tmp/sample.sqlite
+.venv/bin/llmwiki eval run --set evals/golden/sample-vault.json --vault evals/sample-vault --db /tmp/sample.sqlite --split all
+```
+
+## Public and private parts of the repository
+
+Public (this repository): the `llmwiki` package, `hermes_plugin`, tests, docs,
+CI, the golden-set schema, the synthetic sample vault and set, generated
+benchmark tables, the shipped injection gate, and the release scripts.
+
+Private (`private/`, git-ignored, never published): the real-vault golden
+question sets and their drafts, recorded evaluation runs (they embed queries,
+page paths and section titles from a personal vault), and release scratch such
+as announcement drafts and upstream patches in flight. `evals/runs/` is
+git-ignored too so nobody commits run records by accident.
 
 ## Architecture
 

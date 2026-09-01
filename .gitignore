@@ -1,4 +1,4 @@
-# Build artifacts
+# --- Build artifacts ---------------------------------------------------------
 .venv/
 .venv311/
 __pycache__/
@@ -12,13 +12,26 @@ dist/
 .coverage
 htmlcov/
 
-# Local data
+# --- Local data (never public) -----------------------------------------------
 .data/
 *.sqlite
 *.sqlite-shm
 *.sqlite-wal
 
-# Editor
+# --- Private development area (never public) ---------------------------------
+# Real-vault golden question sets, their drafts, recorded evaluation runs
+# (they embed queries, page paths and section titles from the personal
+# vault), and release scratch (announcement drafts, index entry, upstream
+# patches in flight). The public repo keeps the harness, the schema, the
+# synthetic sample set, generated benchmark tables and the recorded gate
+# decisions in docs/evaluation.md.
+private/
+evals/runs/*
+!evals/runs/.gitkeep
+
+# --- Editor / OS ---------------------------------------------------------------
 .vscode/
 .idea/
 .DS_Store
+.claude/
+.hermes/

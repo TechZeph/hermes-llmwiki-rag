@@ -289,7 +289,16 @@ def test_corpus_fingerprint_is_order_independent() -> None:
 
 
 def test_real_golden_set_is_well_formed() -> None:
-    path = Path(__file__).resolve().parents[2] / "evals" / "golden" / "clanker-vault-v1.json"
+    # The real-vault set is a private development asset; skip in public checkouts.
+    path = (
+        Path(__file__).resolve().parents[2]
+        / "private"
+        / "evals"
+        / "golden"
+        / "clanker-vault-v1.json"
+    )
+    if not path.exists():
+        pytest.skip("private golden set not present")
     golden: GoldenSet = load_golden(path)
     assert validate_golden(golden) == []
     assert stratification_report(golden) == []
