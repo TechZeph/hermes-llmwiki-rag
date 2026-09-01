@@ -151,6 +151,9 @@ class LexicalIndex(ABC):
         *,
         profile: str = "all",
         document_ids: set[int] | None = None,
+        only_document_ids: set[int] | None = None,
+        updated_after_ns: int | None = None,
+        updated_before_ns: int | None = None,
     ) -> list[tuple[int, float]]:
         """Return ``(chunk_id, score)`` pairs, best first; larger score is better.
 
@@ -180,6 +183,9 @@ class Fts5Index(LexicalIndex):
         *,
         profile: str = "all",
         document_ids: set[int] | None = None,
+        only_document_ids: set[int] | None = None,
+        updated_after_ns: int | None = None,
+        updated_before_ns: int | None = None,
     ) -> list[tuple[int, float]]:
         if top_k <= 0:
             return []
@@ -191,6 +197,18 @@ class Fts5Index(LexicalIndex):
             ids = sorted(document_ids)[:900]
             predicate = f"({predicate} OR d.id IN ({','.join('?' * len(ids))}))"
             params = [*params, *ids]
+        if only_document_ids is not None:
+            if not only_document_ids:
+                return []
+            ids = sorted(only_document_ids)[:900]
+            predicate = f"({predicate} AND d.id IN ({','.join('?' * len(ids))}))"
+            params = [*params, *ids]
+        if updated_after_ns is not None:
+            predicate = f"({predicate} AND d.updated_at_ns >= ?)"
+            params = [*params, int(updated_after_ns)]
+        if updated_before_ns is not None:
+            predicate = f"({predicate} AND d.updated_at_ns <= ?)"
+            params = [*params, int(updated_before_ns)]
         weights = ", ".join(str(w) for w in FTS_COLUMN_WEIGHTS)
         rows = self._conn.execute(
             f"""

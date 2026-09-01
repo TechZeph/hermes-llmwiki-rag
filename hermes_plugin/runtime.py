@@ -32,6 +32,8 @@ from llmwiki.reranker import Reranker
 from llmwiki.retrieval import VALID_MODES, Retriever, context_for
 from llmwiki.routing import route_query
 
+from .watcher import PluginWatcher
+
 logger = logging.getLogger("llmwiki.plugin")
 
 VALID_PROFILE_PREFIXES = ("answer", "evidence", "history", "all", "project:")
@@ -57,6 +59,8 @@ class PluginConfig:
     auto_inject_profile: str = "answer"
     auto_inject_deadline_ms: int = 1500
     auto_inject_budget_tokens: int = 800
+    watch: bool = False
+    watch_debounce_s: int = 2
 
     @staticmethod
     def from_getter(get: Callable[[str, Any], Any]) -> PluginConfig:
@@ -92,6 +96,8 @@ class PluginConfig:
             auto_inject_profile=_str("auto_inject_profile", "answer"),
             auto_inject_deadline_ms=_int("auto_inject_deadline_ms", 1500, 100, 2000),
             auto_inject_budget_tokens=_int("auto_inject_budget_tokens", 800, 100, 4000),
+            watch=_bool("watch", False),
+            watch_debounce_s=_int("watch_debounce_s", 2, 1, 600),
         )
 
 
@@ -187,6 +193,8 @@ class PluginRuntime:
         self._decisions: deque[dict[str, Any]] = deque(maxlen=50)
         self._gate_path = gate_path or (Path(__file__).resolve().parent / "injection_gate.json")
         self._gate: InjectionGate | None = load_gate(self._gate_path)
+        self._watcher: PluginWatcher | None = None
+        self._watcher_lock = threading.Lock()
 
     # --- lifecycle ------------------------------------------------------------
 
@@ -201,7 +209,41 @@ class PluginRuntime:
         return self._settings is not None
 
     def close(self) -> None:
+        with self._watcher_lock:
+            watcher = self._watcher
+        if watcher is not None:
+            watcher.stop()
         self._pool.shutdown(wait=False, cancel_futures=True)
+
+    # --- watcher ----------------------------------------------------------------
+
+    def ensure_watcher(self) -> dict[str, Any] | None:
+        """Start the in-plugin watcher once when configured; never raises.
+
+        Called from hook callbacks (first turn), never from ``register``.
+        """
+        if not self.config.watch or not self.configured:
+            return None
+        with self._watcher_lock:
+            if self._watcher is None:
+                self._watcher = PluginWatcher(
+                    self.settings,
+                    embedder_factory=self._embedder_factory,
+                    debounce_s=float(self.config.watch_debounce_s),
+                )
+            watcher = self._watcher
+        try:
+            watcher.start()
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.warning("llmwiki watcher failed to start: %s", type(exc).__name__)
+        return watcher.state()
+
+    def watcher_state(self) -> dict[str, Any] | None:
+        with self._watcher_lock:
+            watcher = self._watcher
+        if watcher is None:
+            return {"state": "disabled" if not self.config.watch else "not-started"}
+        return watcher.state()
 
     def _get_embedder(self) -> Embedder:
         with self._model_lock:
@@ -400,6 +442,7 @@ class PluginRuntime:
             "last_index_run": last_run,
             "stale": stale,
             "reindex_job": job,
+            "watcher": self.watcher_state(),
             "recent_injection_decisions": list(self._decisions)[-5:],
             "remediation": remediation,
         }

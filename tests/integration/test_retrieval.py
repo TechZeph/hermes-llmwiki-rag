@@ -160,3 +160,82 @@ def test_context_block_from_real_retrieval(indexed) -> None:
     assert block.total_tokens <= settings.context_budget_tokens
     assert all(not c.path.startswith("/") for c in block.citations)
     assert all(c.chunk_ids and c.content_hashes for c in block.citations)
+
+
+def test_graph_channel_adds_linked_pages_as_candidates(indexed) -> None:
+    settings, embedder = indexed
+    with dbmod.connect(settings.db_path) as conn:
+        r = Retriever(conn, embedder=embedder, settings=settings)
+        # "vector storage" matches index-tools.md lexically but that is a route map;
+        # the fastembed page is linked from sqlite-vec? No: sqlite-vec.md has no links,
+        # index-tools.md links to both. Use profile all so links resolve across pages.
+        plain = r.retrieve(
+            "fastembed",
+            mode="hybrid",
+            profile="all",
+            top_k=20,
+            max_per_document=0,
+            graph_channel=False,
+        )
+        graphed = r.retrieve(
+            "fastembed",
+            mode="hybrid",
+            profile="all",
+            top_k=20,
+            max_per_document=0,
+            graph_channel=True,
+        )
+    assert graphed.graph_returned >= 0
+    assert {c.chunk_id for c in plain.candidates} <= {
+        c.chunk_id for c in graphed.candidates
+    } | set()
+    assert graphed.mode == "hybrid"
+
+
+def test_date_filter_and_recency_boost(indexed) -> None:
+    settings, embedder = indexed
+    with dbmod.connect(settings.db_path) as conn:
+        r = Retriever(conn, embedder=embedder, settings=settings)
+        future = 4_000_000_000 * 1_000_000_000
+        none = r.retrieve("sqlite-vec", mode="hybrid", profile="all", updated_after_ns=future)
+        assert none.candidates == ()
+        past = r.retrieve(
+            "sqlite-vec", mode="hybrid", profile="all", updated_before_ns=future, top_k=5
+        )
+        assert past.candidates
+        boosted = r.retrieve(
+            "what is the current status of sqlite-vec?", mode="hybrid", top_k=5, recency_boost=True
+        )
+        assert boosted.intent == "current-state"
+        head = [c for c in boosted.candidates if c.authority_match]
+        assert [c.updated_at_ns for c in head] == sorted(
+            (c.updated_at_ns for c in head), reverse=True
+        )
+
+
+def test_regression_report_rule() -> None:
+    from llmwiki.evaluation.runner import regression_report
+
+    base = {
+        "split": "heldout",
+        "golden_version": "v1",
+        "corpus_fingerprint": "f",
+        "variant": "a",
+        "git_sha": "1",
+        "overall": {
+            "hit_at": {"5": 0.9},
+            "mrr": 0.8,
+            "authority_accuracy_top1": 0.9,
+            "ndcg_at_10": 0.8,
+            "recall_at": {"10": 0.8},
+            "latency_p95_ms": 80,
+        },
+    }
+    same = dict(base, variant="b")
+    ok = regression_report(base, same)
+    assert ok["comparable"] and ok["regression"] is False and ok["deltas"]["mrr"] == 0.0
+    worse = dict(base, overall={**base["overall"], "mrr": 0.7})
+    bad = regression_report(base, worse)
+    assert bad["regression"] is True and any("mrr dropped" in p for p in bad["problems"])
+    other = dict(base, split="dev")
+    assert regression_report(base, other)["comparable"] is False

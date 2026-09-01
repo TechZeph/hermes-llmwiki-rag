@@ -158,6 +158,7 @@ class RetrievalResult:
     dense_returned: int = 0
     lexical_returned: int = 0
     fused_total: int = 0
+    graph_returned: int = 0
     intent: str = ""
     conflicts: tuple[str, ...] = ()
     elapsed_ms: float = 0.0

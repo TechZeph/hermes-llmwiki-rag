@@ -71,8 +71,8 @@ def test_register_declares_manifest_tools_and_hook(vault_and_db) -> None:
         assert f"- {name}" in manifest
         assert ctx.tools[name]["toolset"] == "llmwiki"
         assert "override" not in ctx.tools[name] or not ctx.tools[name]["override"]
-    assert list(ctx.hooks) == ["pre_llm_call"]
-    assert "- pre_llm_call" in manifest
+    assert set(ctx.hooks) == {"pre_llm_call", "on_session_start"}
+    assert "- pre_llm_call" in manifest and "- on_session_start" in manifest
     hook = ctx.hooks["pre_llm_call"][0]
     # Doctor requires **kwargs for forward compatibility.
     import inspect
@@ -243,3 +243,45 @@ def test_pre_llm_call_injects_only_with_gate_and_route(vault_and_db, tmp_path: P
     # No query text is ever recorded in decisions.
     for record in slow_rt.status()["recent_injection_decisions"]:
         assert "sqlite-vec" not in json.dumps(record)
+
+
+def test_watcher_refuses_cold_start_and_starts_on_warm_projection(
+    vault_and_db, tmp_path: Path
+) -> None:
+    import time
+
+    from hermes_plugin.watcher import cold_start_check
+
+    vault, db = vault_and_db
+    # Cold: no projection at all.
+    cold = _runtime(vault, tmp_path / "missing.sqlite", watch=True)
+    state = cold.ensure_watcher()
+    assert state is not None and state["state"] == "refused" and "llmwiki index" in state["reason"]
+    assert cold.status()["watcher"]["state"] == "refused"
+    # Disabled: nothing starts.
+    off = _runtime(vault, db)
+    assert off.ensure_watcher() is None and off.status()["watcher"]["state"] == "disabled"
+    # Warm: starts, performs the startup run, reacts to a change, stops on close.
+    assert cold_start_check(off.settings) == ""
+    warm = _runtime(vault, db, watch=True, watch_debounce_s=1)
+    warm._watcher_lock  # noqa: B018 - attribute exists
+    state = warm.ensure_watcher()
+    assert state is not None and state["state"] in ("starting", "running")
+    deadline = time.time() + 15
+    while warm.watcher_state()["runs"] < 1 and time.time() < deadline:
+        time.sleep(0.05)
+    assert warm.watcher_state()["state"] == "running" and warm.watcher_state()["runs"] >= 1
+    page = vault / "wiki" / "watched-page.md"
+    page.write_text("# Watched\n\nfaiss comparison notes\n", encoding="utf-8")
+    while warm.watcher_state()["runs"] < 2 and time.time() < deadline:
+        time.sleep(0.05)
+    assert warm.watcher_state()["runs"] >= 2 and warm.watcher_state()["last_run"]["added"] == 1
+    page.unlink()
+    while warm.watcher_state()["runs"] < 3 and time.time() < deadline:
+        time.sleep(0.05)
+    warm.close()
+    assert warm.watcher_state()["state"] == "stopped"
+    # Session-start hook triggers the same lazy start path.
+    handlers = hermes_plugin.tools.make_handlers(_runtime(vault, db, watch=True))
+    assert handlers.on_session_start(session_id="s") is None
+    handlers.runtime.close()

@@ -98,6 +98,13 @@ class Settings:
     """Per-channel RRF weights selected on the dev split; 1.0/1.0 is plain RRF."""
     query_recipe: str = "query-v2-bge-instruction"
     """Query embedding recipe id, selected on dev (see ``llmwiki.recipes.QUERY_RECIPES``)."""
+    graph_channel_enabled: bool = False
+    graph_channel_weight: float = 0.5
+    graph_channel_seed_documents: int = 5
+    graph_channel_max_neighbours: int = 30
+    """V2 experiment: a third RRF channel of chunks from pages linked to/from the top fused pages."""
+    recency_boost: bool = False
+    """V2 experiment: for current-state intent, order tier-0 pages by modification time."""
     project_graph_expansion: bool = True
     project_graph_hops: int = 1
     project_graph_max_linked: int = 40

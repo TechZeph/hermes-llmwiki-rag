@@ -72,6 +72,7 @@ def register(ctx: Any) -> None:
     # Always registered so the manifest and the runtime agree; it returns
     # None unless auto_inject is enabled and a calibrated gate exists.
     ctx.register_hook("pre_llm_call", handlers.pre_llm_call)
+    ctx.register_hook("on_session_start", handlers.on_session_start)
     on_unload = getattr(ctx, "on_unload", None)
     if callable(on_unload):
         with contextlib.suppress(Exception):

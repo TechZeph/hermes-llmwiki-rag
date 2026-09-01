@@ -223,3 +223,33 @@ Regression rule check (same corpus fingerprint, same golden version):
 
 Identical held-out metrics; the four held-out project-profile questions
 keep hit@5 1.00 / MRR 0.81. Expansion stays on (`project_graph_expansion`).
+
+### 2026-09-01 — Golden set v1.1 (corpus maintenance) and new baseline
+
+Rewriting `wiki/projects/hermes-llmwiki-rag/current-state.md` removed two
+pinned headings. `cs-001` was re-pinned to the page's new sections and
+`cs-011` dropped the removed source (its decision-page source remains).
+Queries and splits are unchanged; the file version is `v1.1` and carries a
+changelog. Because the corpus fingerprint changed, the hybrid baseline was
+re-recorded on both splits (see `evals/runs/`), and later regression checks
+use `llmwiki eval regress <baseline> <candidate>`.
+
+### 2026-09-01 — V2 experiments: graph channel and recency boost (both off by default)
+
+Dev split, hybrid default as baseline (hit@5 0.971 / recall@10 0.857 /
+MRR 0.884 / nDCG@10 0.825 / authority@1 0.942):
+
+| experiment | hit@5 | recall@10 | MRR | nDCG@10 | authority@1 |
+|---|---|---|---|---|---|
+| graph channel w=0.25, 15 neighbours | 0.957 | 0.876 | 0.883 | 0.832 | 0.942 |
+| graph channel w=0.25, 30 neighbours | 0.957 | 0.866 | 0.883 | 0.829 | 0.942 |
+| graph channel w=0.5 | 0.957 | 0.861 | 0.880 | 0.826 | 0.942 |
+| graph channel w=1.0 | 0.928 | 0.851 | 0.857 | 0.805 | 0.928 |
+| recency boost (current-state intent) | 0.971 | 0.857 | 0.874 | 0.817 | 0.942 |
+
+The linked-pages channel buys recall@10 (+0.02 at w=0.25) at the cost of
+one hit@5 question; heavier weights regress. Recency ordering lowers
+current-state MRR from 0.88 to 0.79 because the newest page in a project
+is often the log or next-actions page rather than the answer. Both stay
+available (`--graph`, `graph_channel_enabled`, `recency_boost`) and off by
+default; neither meets the "improves or matches" V2 rule.

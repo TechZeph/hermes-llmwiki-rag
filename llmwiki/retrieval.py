@@ -30,7 +30,7 @@ from .citations import ContextBlock, build_context
 from .config import Settings
 from .corpus import profile_matches, profile_predicate
 from .embeddings import Embedder
-from .graph import project_scope_document_ids
+from .graph import neighbours, project_scope_document_ids
 from .hybrid import diversify, reciprocal_rank_fusion
 from .lexical import Fts5Index, LexicalIndex
 from .models import Candidate, RetrievalResult
@@ -92,19 +92,21 @@ def _profile_metadata(
         placeholders = ",".join("?" * len(batch))
         rows = conn.execute(
             f"""
-            SELECT c.id, d.source_kind, d.page_role, d.project_id, d.is_route_map, d.id
+            SELECT c.id, d.source_kind, d.page_role, d.project_id, d.is_route_map, d.id,
+                   d.updated_at_ns
             FROM chunks c JOIN documents d ON d.id = c.document_id
             WHERE c.id IN ({placeholders})
             """,
             batch,
         ).fetchall()
-        for chunk_id, source_kind, page_role, project_id, is_route_map, doc_id in rows:
+        for chunk_id, source_kind, page_role, project_id, is_route_map, doc_id, updated in rows:
             out[int(chunk_id)] = {
                 "source_kind": str(source_kind),
                 "page_role": str(page_role),
                 "project_id": str(project_id) if project_id is not None else None,
                 "is_route_map": bool(is_route_map),
                 "document_id": int(doc_id),
+                "updated_at_ns": int(updated or 0),
             }
     return out
 
@@ -145,7 +147,15 @@ class Retriever:
 
     # --- channels -----------------------------------------------------------
 
-    def dense_channel(self, query: str, *, profile: str, top_k: int) -> list[tuple[int, float]]:
+    def dense_channel(
+        self,
+        query: str,
+        *,
+        profile: str,
+        top_k: int,
+        updated_after_ns: int | None = None,
+        updated_before_ns: int | None = None,
+    ) -> list[tuple[int, float]]:
         """Profile-filtered nearest neighbours as ``(chunk_id, distance)``."""
         if self._embedder is None:
             raise ValueError("dense retrieval requires an embedder")
@@ -173,17 +183,57 @@ class Retriever:
                     profile_matches(profile, m)
                     or (scope is not None and m.get("document_id") in scope)
                 )
+                and _within(m, updated_after_ns, updated_before_ns)
             ]
             if len(kept) >= top_k or fetch >= total or len(hits) < fetch:
                 return kept[:top_k]
             fetch = min(total, fetch * 4)
 
-    def lexical_channel(self, query: str, *, profile: str, top_k: int) -> list[tuple[int, float]]:
+    def lexical_channel(
+        self,
+        query: str,
+        *,
+        profile: str,
+        top_k: int,
+        updated_after_ns: int | None = None,
+        updated_before_ns: int | None = None,
+        only_document_ids: set[int] | None = None,
+    ) -> list[tuple[int, float]]:
         """Profile-filtered BM25 hits as ``(chunk_id, score)``, larger is better."""
         profile_predicate(profile)  # validate early with the same error text
         return self._lexical.search(
-            query, top_k, profile=profile, document_ids=self._profile_scope(profile)
+            query,
+            top_k,
+            profile=profile,
+            document_ids=self._profile_scope(profile),
+            only_document_ids=only_document_ids,
+            updated_after_ns=updated_after_ns,
+            updated_before_ns=updated_before_ns,
         )
+
+    def graph_channel(
+        self,
+        query: str,
+        *,
+        profile: str,
+        seed_document_ids: Sequence[int],
+        top_k: int,
+        max_neighbours: int,
+    ) -> list[tuple[int, float]]:
+        """Query-matched chunks from pages linked to or from the seed pages.
+
+        This is a candidate *source*, not a ranking signal: the chunks are
+        still ordered by BM25 against the query and then fused with the
+        other channels by RRF, so an unrelated neighbour cannot outrank a
+        directly matching page.
+        """
+        if not seed_document_ids or top_k <= 0:
+            return []
+        linked = neighbours(self._conn, seed_document_ids, hops=1, max_nodes=max_neighbours)
+        linked -= set(int(d) for d in seed_document_ids)
+        if not linked:
+            return []
+        return self.lexical_channel(query, profile=profile, top_k=top_k, only_document_ids=linked)
 
     def _profile_scope(self, profile: str) -> set[int] | None:
         """Explicit document-id scope for graph-expanded profiles, else ``None``."""
@@ -212,6 +262,10 @@ class Retriever:
         max_per_document: int | None = None,
         rerank: bool | None = None,
         apply_authority: bool = True,
+        updated_after_ns: int | None = None,
+        updated_before_ns: int | None = None,
+        graph_channel: bool | None = None,
+        recency_boost: bool | None = None,
     ) -> RetrievalResult:
         started = time.perf_counter()
         s = self._settings
@@ -225,6 +279,8 @@ class Retriever:
         k_rrf = rrf_k if rrf_k is not None else s.rrf_k
         per_doc = max_per_document if max_per_document is not None else s.max_chunks_per_document
         use_reranker = rerank if rerank is not None else s.reranker_enabled
+        use_graph = graph_channel if graph_channel is not None else s.graph_channel_enabled
+        use_recency = recency_boost if recency_boost is not None else s.recency_boost
         query = query.strip()
         if not query:
             return RetrievalResult(query=query, profile=profile, mode=mode, candidates=())
@@ -232,22 +288,59 @@ class Retriever:
         dense_hits: list[tuple[int, float]] = []
         lexical_hits: list[tuple[int, float]] = []
         if mode in ("dense", "hybrid"):
-            dense_hits = self.dense_channel(query, profile=profile, top_k=k_dense)
+            dense_hits = self.dense_channel(
+                query,
+                profile=profile,
+                top_k=k_dense,
+                updated_after_ns=updated_after_ns,
+                updated_before_ns=updated_before_ns,
+            )
         if mode in ("lexical", "hybrid"):
-            lexical_hits = self.lexical_channel(query, profile=profile, top_k=k_lex)
+            lexical_hits = self.lexical_channel(
+                query,
+                profile=profile,
+                top_k=k_lex,
+                updated_after_ns=updated_after_ns,
+                updated_before_ns=updated_before_ns,
+            )
 
         dense_rank = {cid: i for i, (cid, _) in enumerate(dense_hits, start=1)}
         dense_dist = {cid: d for cid, d in dense_hits}
         lex_rank = {cid: i for i, (cid, _) in enumerate(lexical_hits, start=1)}
         lex_score = {cid: sc for cid, sc in lexical_hits}
 
+        graph_hits: list[tuple[int, float]] = []
         if mode == "hybrid":
-            fused = reciprocal_rank_fusion(
-                {"dense": [c for c, _ in dense_hits], "lexical": [c for c, _ in lexical_hits]},
-                k=k_rrf,
-                weights=rrf_weights
-                or {"dense": s.rrf_dense_weight, "lexical": s.rrf_lexical_weight},
+            channels: dict[str, list[int]] = {
+                "dense": [c for c, _ in dense_hits],
+                "lexical": [c for c, _ in lexical_hits],
+            }
+            weights = dict(
+                rrf_weights or {"dense": s.rrf_dense_weight, "lexical": s.rrf_lexical_weight}
             )
+            if use_graph:
+                first_pass = reciprocal_rank_fusion(channels, k=k_rrf, weights=weights)
+                seed_meta = _profile_metadata(
+                    self._conn, [e.id for e in first_pass[: s.graph_channel_seed_documents * 3]]
+                )
+                seeds: list[int] = []
+                for entry in first_pass:
+                    doc_id = seed_meta.get(entry.id, {}).get("document_id")
+                    if isinstance(doc_id, int) and doc_id not in seeds:
+                        seeds.append(doc_id)
+                    if len(seeds) >= s.graph_channel_seed_documents:
+                        break
+                graph_hits = self.graph_channel(
+                    query,
+                    profile=profile,
+                    seed_document_ids=seeds,
+                    top_k=k_lex,
+                    max_neighbours=s.graph_channel_max_neighbours,
+                )
+                if graph_hits:
+                    channels["graph"] = [c for c, _ in graph_hits]
+                    weights.setdefault("graph", s.graph_channel_weight)
+            fused = reciprocal_rank_fusion(channels, k=k_rrf, weights=weights)
             ordered = [e.id for e in fused]
             rrf = {e.id: e.rrf_score for e in fused}
         elif mode == "dense":
@@ -286,6 +379,8 @@ class Retriever:
             candidates, conflicts = apply_authority_policy(
                 candidates, intent=intent, profile=profile
             )
+        if use_recency and intent == "current-state":
+            candidates = _recency_reorder(candidates)
 
         group_of = {c.chunk_id: c.document_id for c in candidates}
         kept_ids = diversify([c.chunk_id for c in candidates], group_of, max_per_group=per_doc)
@@ -300,6 +395,7 @@ class Retriever:
             dense_returned=len(dense_hits),
             lexical_returned=len(lexical_hits),
             fused_total=len(ordered),
+            graph_returned=len(graph_hits),
             intent=intent,
             conflicts=conflicts,
             elapsed_ms=(time.perf_counter() - started) * 1000.0,
@@ -319,6 +415,22 @@ class Retriever:
             for idx, score in scored
         ]
         return reordered + tail
+
+
+def _within(meta: Mapping[str, object], after: int | None, before: int | None) -> bool:
+    updated = meta.get("updated_at_ns")
+    stamp = int(updated) if isinstance(updated, int) else 0
+    if after is not None and stamp < after:
+        return False
+    return not (before is not None and stamp > before)
+
+
+def _recency_reorder(candidates: list[Candidate]) -> list[Candidate]:
+    """Stable: authority-matched head ordered newest first, everything else untouched."""
+    head = [c for c in candidates if c.authority_match]
+    tail = [c for c in candidates if not c.authority_match]
+    head.sort(key=lambda c: -c.updated_at_ns)
+    return head + tail
 
 
 def context_for(result: RetrievalResult, settings: Settings) -> ContextBlock:

@@ -306,7 +306,55 @@ __all__ = [
     "git_sha",
     "load_run",
     "projection_snapshot",
+    "regression_report",
     "run_variant",
     "variant_retrieve",
     "write_run",
 ]
+
+
+REGRESSION_RULE = {"hit_at_5": 0.02, "mrr": 0.02, "authority_accuracy_top1": 0.05}
+
+
+def regression_report(baseline: dict[str, Any], candidate: dict[str, Any]) -> dict[str, Any]:
+    """Apply the predeclared regression rule (docs/evaluation.md) to two run records."""
+    problems: list[str] = []
+    comparable = True
+    for key in ("split", "golden_version", "corpus_fingerprint"):
+        if baseline.get(key) != candidate.get(key):
+            comparable = False
+            problems.append(f"{key} differs ({baseline.get(key)!r} vs {candidate.get(key)!r})")
+    b = baseline.get("overall", {})
+    c = candidate.get("overall", {})
+    deltas: dict[str, float | None] = {}
+    regression = False
+    checks = (
+        ("hit_at_5", _dig(b, "hit_at.5"), _dig(c, "hit_at.5")),
+        ("mrr", b.get("mrr"), c.get("mrr")),
+        (
+            "authority_accuracy_top1",
+            b.get("authority_accuracy_top1"),
+            c.get("authority_accuracy_top1"),
+        ),
+        ("ndcg_at_10", b.get("ndcg_at_10"), c.get("ndcg_at_10")),
+        ("recall_at_10", _dig(b, "recall_at.10"), _dig(c, "recall_at.10")),
+        ("latency_p95_ms", b.get("latency_p95_ms"), c.get("latency_p95_ms")),
+    )
+    for name, before, after in checks:
+        if isinstance(before, (int, float)) and isinstance(after, (int, float)):
+            delta = float(after) - float(before)
+            deltas[name] = round(delta, 4)
+            tolerance = REGRESSION_RULE.get(name)
+            if tolerance is not None and delta < -tolerance:
+                regression = True
+                problems.append(f"{name} dropped by {-delta:.3f} (> {tolerance})")
+        else:
+            deltas[name] = None
+    return {
+        "comparable": comparable,
+        "regression": regression if comparable else None,
+        "deltas": deltas,
+        "baseline": {"variant": baseline.get("variant"), "git_sha": baseline.get("git_sha")},
+        "candidate": {"variant": candidate.get("variant"), "git_sha": candidate.get("git_sha")},
+        "problems": problems,
+    }

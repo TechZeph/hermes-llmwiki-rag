@@ -88,8 +88,14 @@ class Handlers:
             return _error("reindex-failed", type(exc).__name__)
         return _dump(payload)
 
+    def on_session_start(self, **kwargs: Any) -> None:
+        """Lazy watcher start on the first session; never returns content."""
+        self.runtime.ensure_watcher()
+        return None
+
     def pre_llm_call(self, user_message: str = "", **kwargs: Any) -> dict[str, str] | None:
         """Opt-in automatic injection. Uses only the current user message."""
+        self.runtime.ensure_watcher()
         if not isinstance(user_message, str) or not user_message:
             return None
         return self.runtime.auto_inject(user_message)

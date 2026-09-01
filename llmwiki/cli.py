@@ -258,6 +258,8 @@ def integrity(vault: Path | None, db: Path | None, as_json: bool) -> None:
     help="Retrieval channels (default: configured retrieval_mode)",
 )
 @click.option("--rerank/--no-rerank", default=None, help="Force the cross-encoder on or off")
+@click.option("--since", default=None, help="Only pages modified on/after this date (YYYY-MM-DD)")
+@click.option("--graph/--no-graph", default=None, help="Force the linked-pages channel on or off")
 @click.option("--context", "as_context", is_flag=True, help="Print the budgeted LLM context block")
 @click.option("--json", "as_json", is_flag=True, help="Output machine-readable JSON")
 def search(
@@ -267,10 +269,20 @@ def search(
     profile: str,
     mode: str | None,
     rerank: bool | None,
+    since: str | None,
+    graph: bool | None,
     as_context: bool,
     as_json: bool,
 ) -> None:
     """Profile-aware retrieval over the indexed vault (dense, lexical, or hybrid)."""
+    updated_after_ns: int | None = None
+    if since:
+        from datetime import datetime
+
+        try:
+            updated_after_ns = int(datetime.fromisoformat(since).timestamp() * 1_000_000_000)
+        except ValueError as exc:
+            raise click.BadParameter("--since expects YYYY-MM-DD") from exc
     from . import db as dbmod
     from .retrieval import Retriever, context_for
 
@@ -304,6 +316,8 @@ def search(
             mode=effective_mode,
             top_k=top_k,
             rerank=bool(reranker) if rerank is None else rerank,
+            updated_after_ns=updated_after_ns,
+            graph_channel=graph,
         )
     if as_context:
         block = context_for(result, base)
@@ -559,6 +573,21 @@ def eval_calibrate(
         click.echo(
             "Gate A NOT passed: automatic injection stays uncertified (opt-in only).", err=True
         )
+
+
+@eval.command("regress")
+@click.argument("baseline", type=click.Path(exists=True, dir_okay=False, path_type=Path))
+@click.argument("candidate", type=click.Path(exists=True, dir_okay=False, path_type=Path))
+def eval_regress(baseline: Path, candidate: Path) -> None:
+    """Apply the docs/evaluation.md regression rule to two run records (exit 1 on regression)."""
+    from .evaluation.runner import load_run, regression_report
+
+    report = regression_report(load_run(baseline), load_run(candidate))
+    click.echo(json.dumps(report, indent=2))
+    if report["comparable"] is False:
+        raise click.ClickException("runs are not comparable: " + "; ".join(report["problems"]))
+    if report["regression"]:
+        raise click.ClickException("regression: " + "; ".join(report["problems"]))
 
 
 @eval.command("compare")
