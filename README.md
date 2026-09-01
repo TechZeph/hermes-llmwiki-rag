@@ -9,8 +9,9 @@ and returned as cited, budgeted, untrusted-reference context.
 
 ## Status
 
-**V1 complete, V1.1 calibrated but opt-in.** See `docs/evaluation.md` for the
-predeclared gates and the recorded held-out results.
+**V1, V2 and V3 delivered; V1.1 calibrated but opt-in.** See
+`docs/evaluation.md` for the predeclared gates and every recorded decision,
+and `docs/benchmarks.md` for the generated results tables.
 
 | Stage | State |
 |---|---|
@@ -19,15 +20,20 @@ predeclared gates and the recorded held-out results.
 | 2 Citations, budgeted context, injection boundaries; reranker measured (Gate R failed, opt-in) | done |
 | 3 Hermes plugin: `llmwiki_search`, `llmwiki_status`, `llmwiki_reindex`; `hermes plugins doctor --ci` passes | done |
 | 4 Routing + calibrated injection gate (safety clauses pass, coverage clause fails; opt-in only) | done |
-| 5 V2: wikilink graph, file watching, temporal signals | see `docs/architecture.md` |
+| V2: resolved wikilink graph, project-profile expansion, in-plugin watcher, date filters; linked-pages channel and recency measured and left off | done |
+| V3: MCP server, page-entity mention graph + communities, `llmwiki_related`, multi-query decomposition (measured, off), production docs, generated benchmarks | done |
+| Stage 5: Hermes ecosystem release (PyPI, CI matrix, index listing) | planned, see the vault plan |
 
-Held-out numbers (37 questions, `evals/golden/clanker-vault-v1.json`):
+Held-out numbers with the shipped configuration (equal-weight RRF, k=20):
 
-| variant | hit@5 | recall@10 | MRR | nDCG@10 | authority@1 | p95 |
-|---|---|---|---|---|---|---|
-| dense | 0.848 | 0.786 | 0.773 | 0.726 | 0.848 | 77 ms |
-| lexical | 0.939 | 0.864 | 0.831 | 0.815 | 0.879 | 6 ms |
-| **hybrid (default)** | **0.939** | **0.889** | **0.836** | **0.818** | **0.879** | 83 ms |
+| golden set | variant | hit@5 | recall@10 | MRR | nDCG@10 | authority@1 | p95 |
+|---|---|---|---|---|---|---|---|
+| v1.1 (37 q, vault wording) | hybrid | 0.970 | 0.907 | 0.860 | 0.835 | 0.879 | 112 ms |
+| v2 (26 q, paraphrased) | hybrid | 0.957 | 0.822 | 0.857 | 0.777 | 0.870 | 115 ms |
+
+Single channels for comparison on v2 held-out: lexical hit@5 0.870 / MRR
+0.833, dense 0.783 / 0.707. Full tables per set, split and category:
+`docs/benchmarks.md`.
 
 ## What it does
 
@@ -47,7 +53,11 @@ Held-out numbers (37 questions, `evals/golden/clanker-vault-v1.json`):
   content hashes) and a context block with total/per-document token budgets,
   contiguous-only merging, and fixed delimiters that mark retrieved Markdown as
   untrusted evidence. Prompt-injection fixtures are part of the test suite.
-- Ships a Hermes plugin with three explicit tools and an inert-by-default
+- Resolves Obsidian wikilinks into a graph (99% resolved on the reference
+  vault), expands `project:<id>` with linked curated pages, adds page-entity
+  mention edges and deterministic link communities, and answers "what is
+  related to this page" through `llmwiki_related`.
+- Ships a Hermes plugin with four explicit tools and an inert-by-default
   `pre_llm_call` hook that only injects when the operator opts in, the
   deterministic router says retrieve, the calibrated gate passes, and the
   internal deadline is met. It never persists conversation history or query text.
@@ -77,6 +87,15 @@ The projection lives at `$XDG_DATA_HOME/llmwiki/llmwiki.sqlite` (default
 `~/.local/share/llmwiki/llmwiki.sqlite`) with `0700`/`0600` permissions. Set
 `LLMWIKI_VAULT` / `LLMWIKI_DB` to avoid repeating flags.
 
+## MCP server (any agent)
+
+```bash
+.venv/bin/llmwiki mcp --vault ~/Workspace/vaults/clanker-vault --watch
+```
+
+Serves the same four tools over stdio for Claude Code, Codex, or any MCP host.
+Client config and details: `docs/install.md`.
+
 ## Hermes plugin
 
 ```bash
@@ -88,11 +107,10 @@ hermes config set plugins.entries.llmwiki.settings.vault /path/to/vault
 hermes plugins doctor /path/to/hermes-llmwiki-rag/hermes_plugin --ci
 ```
 
-Settings (all under `plugins.entries.llmwiki.settings`): `vault` (required),
-`db`, `default_profile`, `retrieval_mode`, `max_results`,
-`context_budget_tokens`, `rerank`, `allow_reindex`, `allow_full_rebuild`,
-`stale_after_hours`, `auto_inject`, `auto_inject_profile`,
-`auto_inject_deadline_ms`, `auto_inject_budget_tokens`. Full rebuilds need
+Settings (all under `plugins.entries.llmwiki.settings`) are listed in
+`docs/configuration.md`; the tool contract is in `docs/tools.md`. Set
+`watch: true` to keep the projection fresh from inside the gateway (it refuses
+a cold start; run `llmwiki index` once first). Full rebuilds need
 `allow_full_rebuild: true` and `confirm: true` on the call. Automatic injection
 is off by default and requires the shipped gate to be safety-certified.
 
@@ -113,7 +131,7 @@ Tune on `dev`, report `heldout`. Gates and recorded decisions: `docs/evaluation.
 ```
 llmwiki/
   config.py       immutable Settings (env for CLI bootstrap only)
-  db.py           ordered transactional migrations (v6), integrity, connection
+  db.py           ordered transactional migrations (v8), integrity, connection
   parser.py       frontmatter, headings, tags, aliases, raw wikilinks
   chunker.py      heading-aware structural chunking
   corpus.py       path-derived corpus metadata + profile predicates
@@ -128,17 +146,24 @@ llmwiki/
   citations.py    Citation objects, budgeted untrusted-evidence context
   routing.py      deterministic retrieve/profile routing
   confidence.py   calibrated injection gate
+  graph.py        resolved wikilinks, neighbours, project-profile expansion
+  entities.py     page-entity mentions, communities, related pages
+  multiquery.py   deterministic decomposition + fusion (experiment)
+  watch.py        coalescing file watcher and the supervised in-host watcher
+  service.py      WikiService: the one engine behind CLI, MCP and Hermes
+  mcp_server.py   MCP stdio server over WikiService
   indexer.py      incremental, atomic vault → projection
-  evaluation/     golden sets, metrics, run records, calibration
+  evaluation/     golden sets, metrics, run records, calibration, reports
   cli.py          click CLI
-hermes_plugin/    plugin.yaml, register(ctx), runtime, tools, injection_gate.json
+hermes_plugin/    plugin.yaml, register(ctx), tools, injection_gate.json (thin adapter)
 tests/            unit + integration (synthetic vaults, fake embedders, injection fixtures)
 evals/            golden question sets and recorded runs
 docs/             architecture, operations, evaluation
 ```
 
-See `docs/architecture.md` for the product and retrieval contract and
-`docs/operations.md` for local-data, offline provisioning, and backup limits.
+Docs: `architecture.md` (contract), `install.md`, `configuration.md`,
+`tools.md`, `security.md`, `operations.md`, `evaluation.md` (gates and
+decisions), `benchmarks.md` (generated).
 
 ## Development
 

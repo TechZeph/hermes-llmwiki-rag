@@ -1,17 +1,17 @@
 {
   "weights": {
-    "rrf_top": 70.92244007591923,
-    "rrf_margin": 24.70638899735992,
-    "channel_agreement_top5": -1.3640472549206188,
-    "top1_in_both_channels": 0.0,
-    "authority_top1": -0.14187557778600698,
-    "dense_top_similarity": 6.786503332036571,
-    "bm25_top_norm": 0.7525972543646176,
-    "n_candidates_norm": -4.992593807384995
+    "rrf_top": 51.497293608320916,
+    "rrf_margin": 25.84218476211064,
+    "channel_agreement_top5": -0.6498338159856273,
+    "top1_in_both_channels": 0.8822970011576143,
+    "authority_top1": 0.15529131017680384,
+    "dense_top_similarity": 7.0226698487213755,
+    "bm25_top_norm": 1.6555862572647722,
+    "n_candidates_norm": -4.868191396272693
   },
-  "bias": -8.662474541412825,
-  "threshold": 0.6004401103064917,
-  "fitted_on": "v1@afeefee37f98b301798a8a0893a7eab045f5da27-dirty",
+  "bias": -6.238587801384019,
+  "threshold": 0.6422721790967448,
+  "fitted_on": "v1.1+v2@c9b8f3754770256e407e35db5bb8689068281448-dirty",
   "metrics": {
     "gate_a": {
       "min_precision": 0.9,
@@ -21,59 +21,61 @@
     },
     "gate_a_passed": false,
     "safety_passed": true,
-    "threshold": 0.6004401103064917,
+    "threshold": 0.6422721790967448,
     "dev": {
-      "precision": 0.9354838709677419,
-      "coverage": 0.4492753623188406,
-      "abstain_rate": 0.8888888888888888,
-      "pollution": 0.09375,
-      "injected": 32.0,
-      "n": 78.0
+      "precision": 0.9428571428571428,
+      "coverage": 0.30701754385964913,
+      "abstain_rate": 0.9333333333333333,
+      "pollution": 0.08333333333333333,
+      "injected": 36.0,
+      "n": 129.0
     },
     "heldout": {
-      "precision": 1.0,
-      "coverage": 0.42424242424242425,
+      "precision": 0.9375,
+      "coverage": 0.2857142857142857,
       "abstain_rate": 1.0,
-      "pollution": 0.0,
-      "injected": 14.0,
-      "n": 37.0,
+      "pollution": 0.0625,
+      "injected": 16.0,
+      "n": 63.0,
       "context_pollution": 0.0
     },
     "routing": {
       "dev": {
-        "n": 78,
-        "retrieve_routed_recall": 0.9710144927536232,
-        "profile_accuracy": 0.6865671641791045,
+        "n": 129,
+        "retrieve_routed_recall": 0.9824561403508771,
+        "profile_accuracy": 0.6428571428571429,
         "abstain_routed_to_retrieve": 1.0,
         "by_reason": {
-          "question-like": 54,
+          "question-like": 88,
           "project-cue:dukespoboys.com": 2,
-          "project-cue:codequest": 1,
-          "chronology-cue": 8,
-          "evidence-cue": 8,
+          "project-cue:codequest": 2,
+          "chronology-cue": 19,
+          "evidence-cue": 9,
           "too-few-terms": 2,
           "project-cue:clanker-video-factory": 1,
           "project-cue:urban-farm": 1,
-          "project-cue:techzeph-website": 1
+          "project-cue:techzeph-website": 1,
+          "long-informative-statement": 4
         }
       },
       "heldout": {
-        "n": 37,
+        "n": 63,
         "retrieve_routed_recall": 1.0,
-        "profile_accuracy": 0.6666666666666666,
+        "profile_accuracy": 0.6428571428571429,
         "abstain_routed_to_retrieve": 1.0,
         "by_reason": {
           "project-cue:hermes-llmwiki-rag": 2,
-          "question-like": 27,
+          "question-like": 45,
           "project-cue:clanker-wiki-harness": 1,
           "project-cue:clanker-llm-wiki": 1,
           "evidence-cue": 2,
-          "chronology-cue": 3,
-          "project-cue:home-par-levels": 1
+          "chronology-cue": 8,
+          "project-cue:home-par-levels": 1,
+          "long-informative-statement": 3
         }
       }
     },
-    "calibrated_at": "2026-09-01T19:58:53.162021+00:00",
-    "fitted_on": "v1@afeefee37f98b301798a8a0893a7eab045f5da27-dirty"
+    "calibrated_at": "2026-09-01T20:50:58.791187+00:00",
+    "fitted_on": "v1.1+v2@c9b8f3754770256e407e35db5bb8689068281448-dirty"
   }
 }

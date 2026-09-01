@@ -674,9 +674,11 @@ def eval_run(
 @eval.command("calibrate")
 @click.option(
     "--set",
-    "golden_path",
+    "golden_paths",
     required=True,
+    multiple=True,
     type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    help="Golden set(s); repeat to pool dev and held-out samples",
 )
 @click.option(
     "--vault", type=click.Path(exists=True, file_okay=False, path_type=Path), default=None
@@ -691,21 +693,34 @@ def eval_run(
 )
 @click.option("--top-k", default=10, show_default=True, type=int)
 def eval_calibrate(
-    golden_path: Path, vault: Path | None, db: Path | None, out_path: Path, top_k: int
+    golden_paths: tuple[Path, ...],
+    vault: Path | None,
+    db: Path | None,
+    out_path: Path,
+    top_k: int,
 ) -> None:
     """Fit the automatic-injection gate on dev, measure Gate A on held-out, write the gate file."""
     from . import db as dbmod
     from .embeddings import FastEmbedEmbedder
     from .evaluation.calibration import calibrate, write_gate
-    from .evaluation.golden import load_golden, validate_golden
+    from .evaluation.golden import GoldenSet, load_golden, validate_golden
     from .evaluation.runner import git_sha
     from .retrieval import Retriever
 
     settings = _resolve_settings(vault=vault, db=db, watch=False, require_vault=True)
-    golden = load_golden(golden_path)
-    problems = validate_golden(golden, vault=settings.vault_path)
-    if problems:
-        raise click.ClickException(f"golden set invalid: {problems[0]} (+{len(problems) - 1} more)")
+    sets = [load_golden(path) for path in golden_paths]
+    for g in sets:
+        problems = validate_golden(g, vault=settings.vault_path)
+        if problems:
+            raise click.ClickException(
+                f"golden set invalid: {problems[0]} (+{len(problems) - 1} more)"
+            )
+    golden = GoldenSet(
+        corpus=sets[0].corpus,
+        version="+".join(g.version for g in sets),
+        questions=tuple(q for g in sets for q in g.questions),
+        source_path=sets[0].source_path,
+    )
     embedder = FastEmbedEmbedder(model_name=settings.embedding_model)
     with dbmod.connect(settings.db_path) as conn:
         dbmod.init_schema(conn)

@@ -327,3 +327,22 @@ weights):
 No improvement anywhere and latency doubles; the sub-queries lose the
 cross-clause context that the whole question carries. Stays available via
 `--multiquery` / `multiquery` for experiments; default off.
+
+### 2026-09-01 — Injection gate recalibrated on v1.1 + v2 pooled (safety passed, coverage failed)
+
+The channel-mix change invalidated the earlier gate (recalibrating on
+v1.1 alone gave held-out precision 0.80). `llmwiki eval calibrate` now
+pools several golden sets; fitted on 129 dev questions, measured on 63
+held-out:
+
+| split | precision | coverage | abstain rate | pollution | context pollution |
+|---|---|---|---|---|---|
+| dev (129) | 0.943 | 0.307 | 0.933 | 0.083 | n/a |
+| heldout (63) | 0.938 | 0.286 | 1.000 | 0.063 | 0.000 |
+
+Threshold 0.642. `safety_passed = true`, `gate_a_passed = false`
+(coverage 0.29 < 0.60). The shipped `hermes_plugin/injection_gate.json`
+is this gate; opt-in injection remains permitted, default-on is not.
+Coverage is lower than the v1-only gate because paraphrased questions
+have weaker structural confidence signals; growing both sets is the way
+to raise it.
