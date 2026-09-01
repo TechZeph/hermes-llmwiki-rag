@@ -24,6 +24,7 @@ import sqlite3
 import time
 from collections.abc import Mapping, Sequence
 from dataclasses import replace
+from typing import Any
 
 from .authority import apply_authority_policy, detect_intent
 from .citations import ContextBlock, build_context
@@ -266,7 +267,36 @@ class Retriever:
         updated_before_ns: int | None = None,
         graph_channel: bool | None = None,
         recency_boost: bool | None = None,
+        multiquery: bool | None = None,
     ) -> RetrievalResult:
+        use_multiquery = multiquery if multiquery is not None else self._settings.multiquery
+        if use_multiquery:
+            from .multiquery import retrieve_multiquery
+
+            kwargs: dict[str, Any] = {
+                "profile": profile,
+                "mode": mode,
+                "top_k": top_k,
+                "top_k_dense": top_k_dense,
+                "top_k_lexical": top_k_lexical,
+                "rrf_k": rrf_k,
+                "rrf_weights": rrf_weights,
+                "max_per_document": max_per_document,
+                "rerank": rerank,
+                "apply_authority": apply_authority,
+                "updated_after_ns": updated_after_ns,
+                "updated_before_ns": updated_before_ns,
+                "graph_channel": graph_channel,
+                "recency_boost": recency_boost,
+                "multiquery": False,
+            }
+            final_k = top_k if top_k is not None else self._settings.retrieval_top_k_final
+            return retrieve_multiquery(
+                query,
+                lambda q: self.retrieve(q, **kwargs),
+                top_k=final_k,
+                rrf_k=rrf_k if rrf_k is not None else self._settings.rrf_k,
+            )
         started = time.perf_counter()
         s = self._settings
         mode = mode or s.retrieval_mode

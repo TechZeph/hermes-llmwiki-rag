@@ -260,6 +260,9 @@ def integrity(vault: Path | None, db: Path | None, as_json: bool) -> None:
 @click.option("--rerank/--no-rerank", default=None, help="Force the cross-encoder on or off")
 @click.option("--since", default=None, help="Only pages modified on/after this date (YYYY-MM-DD)")
 @click.option("--graph/--no-graph", default=None, help="Force the linked-pages channel on or off")
+@click.option(
+    "--multiquery/--no-multiquery", default=None, help="Split multi-part questions and fuse"
+)
 @click.option("--context", "as_context", is_flag=True, help="Print the budgeted LLM context block")
 @click.option("--json", "as_json", is_flag=True, help="Output machine-readable JSON")
 def search(
@@ -271,6 +274,7 @@ def search(
     rerank: bool | None,
     since: str | None,
     graph: bool | None,
+    multiquery: bool | None,
     as_context: bool,
     as_json: bool,
 ) -> None:
@@ -318,6 +322,7 @@ def search(
             rerank=bool(reranker) if rerank is None else rerank,
             updated_after_ns=updated_after_ns,
             graph_channel=graph,
+            multiquery=multiquery,
         )
     if as_context:
         block = context_for(result, base)

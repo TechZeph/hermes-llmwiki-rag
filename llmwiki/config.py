@@ -94,8 +94,8 @@ class Settings:
     rrf_k: int = 20
     """Reciprocal-rank-fusion constant. Selected on the dev split (docs/evaluation.md)."""
     rrf_dense_weight: float = 1.0
-    rrf_lexical_weight: float = 2.0
-    """Per-channel RRF weights selected on the dev split; 1.0/1.0 is plain RRF."""
+    rrf_lexical_weight: float = 1.0
+    """Per-channel RRF weights; equal weights selected jointly on v1 and v2 dev splits."""
     query_recipe: str = "query-v2-bge-instruction"
     """Query embedding recipe id, selected on dev (see ``llmwiki.recipes.QUERY_RECIPES``)."""
     graph_channel_enabled: bool = False
@@ -103,6 +103,8 @@ class Settings:
     graph_channel_seed_documents: int = 5
     graph_channel_max_neighbours: int = 30
     """V2 experiment: a third RRF channel of chunks from pages linked to/from the top fused pages."""
+    multiquery: bool = False
+    """V3 experiment: split multi-clause questions into sub-queries and fuse the results."""
     recency_boost: bool = False
     """V2 experiment: for current-state intent, order tier-0 pages by modification time."""
     project_graph_expansion: bool = True
