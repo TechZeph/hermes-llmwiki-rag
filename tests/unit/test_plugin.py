@@ -53,7 +53,12 @@ def vault_and_db(tmp_path_factory: pytest.TempPathFactory):
 
 def _runtime(vault: Path, db: Path, **overrides: Any) -> PluginRuntime:
     config = PluginConfig(vault=str(vault), db=str(db), **overrides)
-    return PluginRuntime(config, embedder_factory=lambda s: KeywordEmbedder(SAMPLE_KEYWORDS))
+    # Point at a non-existent gate so tests do not depend on the shipped calibration.
+    return PluginRuntime(
+        config,
+        embedder_factory=lambda s: KeywordEmbedder(SAMPLE_KEYWORDS),
+        gate_path=db.parent / "no-gate.json",
+    )
 
 
 def test_register_declares_manifest_tools_and_hook(vault_and_db) -> None:
@@ -189,7 +194,10 @@ def test_pre_llm_call_is_off_by_default_and_fails_open(vault_and_db) -> None:
 def test_pre_llm_call_injects_only_with_gate_and_route(vault_and_db, tmp_path: Path) -> None:
     vault, db = vault_and_db
     gate = InjectionGate(
-        weights={"authority_top1": 4.0, "n_candidates_norm": 2.0}, bias=-1.0, threshold=0.5
+        weights={"authority_top1": 4.0, "n_candidates_norm": 2.0},
+        bias=-1.0,
+        threshold=0.5,
+        metrics={"gate_a_passed": True, "safety_passed": True},
     )
     gate_path = tmp_path / "gate.json"
     gate_path.write_text(json.dumps(gate.to_dict()))
@@ -206,6 +214,16 @@ def test_pre_llm_call_injects_only_with_gate_and_route(vault_and_db, tmp_path: P
     assert "wiki/projects/rag/current-state.md" in injected["context"]
     assert runtime.status()["recent_injection_decisions"][-1]["injected"] is True
     assert runtime.auto_inject("thanks!") is None  # routed away
+    uncertified = InjectionGate(weights=gate.weights, bias=gate.bias, threshold=0.5)
+    (tmp_path / "weak.json").write_text(json.dumps(uncertified.to_dict()))
+    weak = PluginRuntime(
+        config,
+        embedder_factory=lambda s: KeywordEmbedder(SAMPLE_KEYWORDS),
+        gate_path=tmp_path / "weak.json",
+    )
+    assert weak.auto_inject("what is the current status of sqlite-vec?") is None
+    assert weak.status()["recent_injection_decisions"][-1]["reason"] == "gate-not-certified"
+    assert weak.status()["auto_inject_gate"] == "uncertified"
     assert runtime.status()["recent_injection_decisions"][-1]["reason"].startswith("route:")
     # Deadline: a zero-budget retrieval that cannot finish in time returns None.
     slow = PluginConfig(vault=str(vault), db=str(db), auto_inject=True, auto_inject_deadline_ms=100)

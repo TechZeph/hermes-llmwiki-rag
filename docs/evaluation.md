@@ -153,10 +153,53 @@ Observation for later work: BM25 alone is unusually strong on this vault
 because the golden questions reuse the vault's own terminology; the
 dense channel mainly adds recall@10 and robustness on concept phrasing.
 
-### 2026-09-01 — Gate R: reranker (see below once the resource grid completes)
+### 2026-09-01 — Gate R: reranker stays opt-in (failed)
 
 `BAAI/bge-reranker-base` over 30 fused candidates on held-out: MRR 0.909
 (+0.073 over the final hybrid), nDCG@10 0.853 (+0.035), authority 0.879,
 but p95 7123 ms and peak RSS 3840 MB. Clauses 1–3 pass; clauses 4 and 5
 fail. The reranker stays opt-in unless a cheaper configuration selected on
 dev passes all five clauses on held-out.
+
+Dev-split grid after moving reranking ahead of the authority policy
+(hybrid baseline: hit@5 0.986 / MRR 0.889 / nDCG 0.832 / p95 109 ms / 216 MB):
+
+| reranker | candidates | MRR | nDCG@10 | authority@1 | p95 ms | peak RSS |
+|---|---|---|---|---|---|---|
+| ms-marco-MiniLM-L-6-v2 | 10 | 0.884 | 0.827 | 0.913 | 395 | 907 MB |
+| ms-marco-MiniLM-L-6-v2 | 30 | 0.851 | 0.806 | 0.884 | 1215 | 2447 MB |
+| jina-reranker-v1-tiny-en | 10 | 0.884 | 0.831 | 0.899 | 462 | 2675 MB |
+| jina-reranker-v1-tiny-en | 30 | 0.837 | 0.805 | 0.870 | 1397 | 2675 MB |
+| bge-reranker-base | 10 | 0.903 | 0.840 | 0.928 | 2002 | 4080 MB |
+
+No configuration reaches the +0.05 MRR clause on dev, and the only one
+with a positive gain (`bge-reranker-base`, 10 candidates) breaks both the
+1500 ms p95 and the 2 GB RSS clauses. `reranker_enabled` stays false; the
+reranker remains available via `--rerank` and the plugin `rerank` setting.
+
+### 2026-09-01 — Gate A: automatic injection stays opt-in (safety passed, coverage failed)
+
+Gate fitted on dev (78 questions) over structural features (RRF top and
+margin, cross-channel agreement, authority match, dense similarity,
+squashed BM25, candidate count); threshold chosen as the lowest value
+reaching 0.90 precision on dev (0.600).
+
+| split | precision | coverage | abstain rate | pollution | context pollution |
+|---|---|---|---|---|---|
+| dev | 0.935 | 0.449 | 0.889 | 0.094 | – |
+| heldout | 1.000 | 0.424 | 1.000 | 0.000 | 0.000 |
+
+Clauses 1, 2 and 4 pass on held-out; clause 3 (coverage ≥ 0.60) fails.
+Interpretation recorded here before use: clauses 1, 2, 4 are the safety
+target the architecture requires before injection may run at all, so the
+gate is shipped as `hermes_plugin/injection_gate.json` with
+`safety_passed = true` and the plugin honours it only when the operator
+sets `auto_inject: true`. `gate_a_passed = false` means default-on is
+not recommended and will not be proposed until coverage improves on a
+later golden version.
+
+Routing (deterministic, no LLM): retrieve-routed recall 0.97 dev / 1.00
+held-out; profile accuracy 0.69 / 0.67 (the router prefers a project
+profile whenever a project name appears, which the golden set does not
+always want); every no-answer question is routed to retrieval, which is
+expected because abstention is the gate's job, not the router's.

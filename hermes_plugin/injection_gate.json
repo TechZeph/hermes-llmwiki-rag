@@ -1,0 +1,79 @@
+{
+  "weights": {
+    "rrf_top": 70.92244007591923,
+    "rrf_margin": 24.70638899735992,
+    "channel_agreement_top5": -1.3640472549206188,
+    "top1_in_both_channels": 0.0,
+    "authority_top1": -0.14187557778600698,
+    "dense_top_similarity": 6.786503332036571,
+    "bm25_top_norm": 0.7525972543646176,
+    "n_candidates_norm": -4.992593807384995
+  },
+  "bias": -8.662474541412825,
+  "threshold": 0.6004401103064917,
+  "fitted_on": "v1@afeefee37f98b301798a8a0893a7eab045f5da27-dirty",
+  "metrics": {
+    "gate_a": {
+      "min_precision": 0.9,
+      "min_abstain_rate": 0.8,
+      "min_coverage": 0.6,
+      "max_pollution": 0.1
+    },
+    "gate_a_passed": false,
+    "safety_passed": true,
+    "threshold": 0.6004401103064917,
+    "dev": {
+      "precision": 0.9354838709677419,
+      "coverage": 0.4492753623188406,
+      "abstain_rate": 0.8888888888888888,
+      "pollution": 0.09375,
+      "injected": 32.0,
+      "n": 78.0
+    },
+    "heldout": {
+      "precision": 1.0,
+      "coverage": 0.42424242424242425,
+      "abstain_rate": 1.0,
+      "pollution": 0.0,
+      "injected": 14.0,
+      "n": 37.0,
+      "context_pollution": 0.0
+    },
+    "routing": {
+      "dev": {
+        "n": 78,
+        "retrieve_routed_recall": 0.9710144927536232,
+        "profile_accuracy": 0.6865671641791045,
+        "abstain_routed_to_retrieve": 1.0,
+        "by_reason": {
+          "question-like": 54,
+          "project-cue:dukespoboys.com": 2,
+          "project-cue:codequest": 1,
+          "chronology-cue": 8,
+          "evidence-cue": 8,
+          "too-few-terms": 2,
+          "project-cue:clanker-video-factory": 1,
+          "project-cue:urban-farm": 1,
+          "project-cue:techzeph-website": 1
+        }
+      },
+      "heldout": {
+        "n": 37,
+        "retrieve_routed_recall": 1.0,
+        "profile_accuracy": 0.6666666666666666,
+        "abstain_routed_to_retrieve": 1.0,
+        "by_reason": {
+          "project-cue:hermes-llmwiki-rag": 2,
+          "question-like": 27,
+          "project-cue:clanker-wiki-harness": 1,
+          "project-cue:clanker-llm-wiki": 1,
+          "evidence-cue": 2,
+          "chronology-cue": 3,
+          "project-cue:home-par-levels": 1
+        }
+      }
+    },
+    "calibrated_at": "2026-09-01T19:58:53.162021+00:00",
+    "fitted_on": "v1@afeefee37f98b301798a8a0893a7eab045f5da27-dirty"
+  }
+}

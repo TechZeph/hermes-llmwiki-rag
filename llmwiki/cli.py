@@ -482,6 +482,67 @@ def eval_run(
     click.echo(format_comparison(records))
 
 
+@eval.command("calibrate")
+@click.option(
+    "--set",
+    "golden_path",
+    required=True,
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+)
+@click.option(
+    "--vault", type=click.Path(exists=True, file_okay=False, path_type=Path), default=None
+)
+@click.option("--db", type=click.Path(dir_okay=False, path_type=Path), default=None)
+@click.option(
+    "--out",
+    "out_path",
+    type=click.Path(dir_okay=False, path_type=Path),
+    default=Path("hermes_plugin/injection_gate.json"),
+    show_default=True,
+)
+@click.option("--top-k", default=10, show_default=True, type=int)
+def eval_calibrate(
+    golden_path: Path, vault: Path | None, db: Path | None, out_path: Path, top_k: int
+) -> None:
+    """Fit the automatic-injection gate on dev, measure Gate A on held-out, write the gate file."""
+    from . import db as dbmod
+    from .embeddings import FastEmbedEmbedder
+    from .evaluation.calibration import calibrate, write_gate
+    from .evaluation.golden import load_golden, validate_golden
+    from .evaluation.runner import git_sha
+    from .retrieval import Retriever
+
+    settings = _resolve_settings(vault=vault, db=db, watch=False, require_vault=True)
+    golden = load_golden(golden_path)
+    problems = validate_golden(golden, vault=settings.vault_path)
+    if problems:
+        raise click.ClickException(f"golden set invalid: {problems[0]} (+{len(problems) - 1} more)")
+    embedder = FastEmbedEmbedder(model_name=settings.embedding_model)
+    with dbmod.connect(settings.db_path) as conn:
+        dbmod.init_schema(conn)
+        projects = [
+            str(r[0])
+            for r in conn.execute(
+                "SELECT DISTINCT project_id FROM documents WHERE project_id IS NOT NULL"
+            ).fetchall()
+        ]
+        retriever = Retriever(conn, embedder=embedder, settings=settings)
+        gate, metrics = calibrate(
+            golden,
+            lambda q: retriever.retrieve(q.query, profile=q.profile, mode="hybrid", top_k=top_k),
+            known_projects=projects,
+            fitted_on=f"{golden.version}@{git_sha()}",
+        )
+    write_gate(gate, out_path)
+    click.echo(f"wrote {out_path}", err=True)
+    click.echo(json.dumps({k: v for k, v in metrics.items() if k != "routing"}, indent=2))
+    click.echo(json.dumps(metrics["routing"], indent=2))
+    if not metrics["gate_a_passed"]:
+        click.echo(
+            "Gate A NOT passed: automatic injection stays uncertified (opt-in only).", err=True
+        )
+
+
 @eval.command("compare")
 @click.argument(
     "runs", nargs=-1, required=True, type=click.Path(exists=True, dir_okay=False, path_type=Path)

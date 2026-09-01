@@ -380,7 +380,19 @@ class PluginRuntime:
             "retrieval_mode": settings.retrieval_mode,
             "reranker_enabled": settings.reranker_enabled,
             "auto_inject": self.config.auto_inject,
-            "auto_inject_gate": "calibrated" if self._gate is not None else "absent",
+            "auto_inject_gate": (
+                "absent"
+                if self._gate is None
+                else (
+                    "certified"
+                    if self._gate.metrics.get("gate_a_passed")
+                    else (
+                        "certified-safe-low-coverage"
+                        if self._gate.metrics.get("safety_passed")
+                        else "uncertified"
+                    )
+                )
+            ),
             "offline_after_provisioning": True,
             "integrity": report,
             "counts": counts,
@@ -459,6 +471,9 @@ class PluginRuntime:
                 return None
             if self._gate is None:
                 record["reason"] = "no-calibrated-gate"
+                return None
+            if not self._gate.metrics.get("safety_passed", False):
+                record["reason"] = "gate-not-certified"
                 return None
             route = route_query(
                 user_message,
