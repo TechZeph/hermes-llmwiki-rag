@@ -14,14 +14,17 @@ and one-off queries.
 from __future__ import annotations
 
 import json
+import os
 import sys
 from pathlib import Path
 
 import click
 
 from .config import Settings
+from .corpus import filter_candidate_ids
 from .indexer import Indexer, summarise_database
 from .logging import setup_logging
+from .recipes import format_query_embedding_input
 
 
 def _resolve_settings(
@@ -29,10 +32,13 @@ def _resolve_settings(
     vault: Path | None,
     db: Path | None,
     watch: bool,
+    require_vault: bool = False,
 ) -> Settings:
     """Build Settings from CLI flags, falling back to env / defaults."""
     from .config import Settings as _Settings
 
+    if require_vault and vault is None and not os.environ.get("LLMWIKI_VAULT"):
+        raise click.UsageError("indexing requires --vault or LLMWIKI_VAULT; refusing to use cwd")
     base = _Settings.from_env()
     return _Settings(
         vault_path=(vault or base.vault_path).expanduser().resolve(),
@@ -58,7 +64,7 @@ def main(log_level: str | None, log_format: str | None) -> None:
     "--vault",
     type=click.Path(exists=True, file_okay=False, path_type=Path),
     default=None,
-    help="Path to the Obsidian vault (default: $LLMWIKI_VAULT or cwd)",
+    help="Path to the Obsidian vault (required unless $LLMWIKI_VAULT is set)",
 )
 @click.option(
     "--db",
@@ -99,7 +105,7 @@ def index(
     """
     if watch:
         click.echo("--watch is not yet implemented (Phase 1); running one pass.", err=True)
-    settings = _resolve_settings(vault=vault, db=db, watch=False)
+    settings = _resolve_settings(vault=vault, db=db, watch=False, require_vault=True)
     click.echo(f"indexing: vault={settings.vault_path} db={settings.db_path} mode={mode}")
     embedder = None
     if embed:
@@ -201,14 +207,12 @@ def integrity(vault: Path | None, db: Path | None, as_json: bool) -> None:
     """Check the retrieval projection for orphan, stale, or mixed rows."""
     from . import db as dbmod
 
-    base = Settings.from_env()
-    db_path = (db or base.db_path).expanduser().resolve()
-    vault_path = (vault or base.vault_path).expanduser().resolve()
-    report = dbmod.inspect_integrity(db_path, vault_path=vault_path)
+    settings = _resolve_settings(vault=vault, db=db, watch=False, require_vault=True)
+    report = dbmod.inspect_integrity(settings.db_path, vault_path=settings.vault_path)
     if as_json:
         click.echo(json.dumps(report, indent=2, default=str))
     elif not report["exists"]:
-        click.echo(f"database does not exist: {db_path}")
+        click.echo(f"database does not exist: {settings.db_path}")
     else:
         click.echo(f"database: {report['path']}")
         click.echo(f"schema version: {report['schema_version']}")
@@ -231,12 +235,19 @@ def integrity(vault: Path | None, db: Path | None, as_json: bool) -> None:
 @click.option("--db", type=click.Path(dir_okay=False, path_type=Path), default=None)
 @click.option("--query", required=True, help="Search query")
 @click.option("--top-k", default=10, show_default=True, type=int)
+@click.option(
+    "--profile",
+    default="answer",
+    show_default=True,
+    help="Corpus profile: answer, evidence, history, all, or project:<id>",
+)
 @click.option("--json", "as_json", is_flag=True, help="Output machine-readable JSON")
 def search(
     vault: Path | None,
     db: Path | None,
     query: str,
     top_k: int,
+    profile: str,
     as_json: bool,
 ) -> None:
     """Semantic search over the indexed vault (Phase 3: vector only).
@@ -262,8 +273,10 @@ def search(
                 err=True,
             )
             sys.exit(2)
-        q_vec = embedder.embed([query])[0]
-        hits = store.search(q_vec, top_k=top_k)
+        q_vec = embedder.embed([format_query_embedding_input(query)])[0]
+        hits = store.search(q_vec, top_k=store.count())
+        allowed_ids = set(filter_candidate_ids(conn, [chunk_id for chunk_id, _ in hits], profile=profile))
+        hits = [(chunk_id, distance) for chunk_id, distance in hits if chunk_id in allowed_ids][:top_k]
         if not hits:
             click.echo("no results.")
             return
@@ -296,6 +309,7 @@ def search(
                     "path": str(row[5]),
                     "title": str(row[6]),
                     "distance": float(distance),
+                    "profile": profile,
                 }
             )
     if as_json:

@@ -16,8 +16,10 @@ v4, committing each transition atomically.
 
 from __future__ import annotations
 
+import os
 import sqlite3
-from collections.abc import Callable, Iterator
+import threading
+from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Final
@@ -26,15 +28,55 @@ from .logging import get_logger
 
 logger = get_logger("db")
 
-_SCHEMA_VERSION: Final = 4
+_SCHEMA_VERSION: Final = 5
 
 # sqlite-vec needs the embedding dimension as a schema literal. The
 # plan locks BGE-small-en-v1.5 (384-dim). If we ever swap models we
 # drop and recreate the vec0 table via a future migration.
 _EMBEDDING_DIM: Final = 384
+_PRIVATE_DIRECTORY_MODE: Final = 0o700
+_PRIVATE_FILE_MODE: Final = 0o600
+_UMASK_LOCK = threading.Lock()
 
 # Model name + dim are exported for the embedder / indexer.
 EMBEDDING_DIM: Final = _EMBEDDING_DIM
+
+
+def _projection_files(db_path: Path) -> tuple[Path, Path, Path]:
+    """Return the main SQLite projection and its WAL sidecars."""
+    return (
+        db_path,
+        db_path.with_name(f"{db_path.name}-wal"),
+        db_path.with_name(f"{db_path.name}-shm"),
+    )
+
+
+def _secure_projection_storage(db_path: Path) -> None:
+    """Create or repair private POSIX permissions for projection storage."""
+    if os.name != "posix":
+        logger.warning("projection permissions are not verified on this platform")
+        return
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    os.chmod(db_path.parent, _PRIVATE_DIRECTORY_MODE)
+    fd = os.open(db_path, os.O_RDWR | os.O_CREAT, _PRIVATE_FILE_MODE)
+    os.close(fd)
+    for path in _projection_files(db_path):
+        if path.exists():
+            os.chmod(path, _PRIVATE_FILE_MODE)
+
+
+@contextmanager
+def _private_umask() -> Iterator[None]:
+    """Keep SQLite-created WAL sidecars private while they are created."""
+    if os.name != "posix":
+        yield
+        return
+    with _UMASK_LOCK:
+        previous = os.umask(0o077)
+        try:
+            yield
+        finally:
+            os.umask(previous)
 
 
 def init_schema(conn: sqlite3.Connection) -> None:
@@ -142,12 +184,32 @@ def _migrate_v3_to_v4(conn: sqlite3.Connection) -> None:
     )
 
 
+def _migrate_v4_to_v5(conn: sqlite3.Connection) -> None:
+    """Add path-derived corpus metadata required for profile-scoped retrieval."""
+    existing_columns = {str(row[1]) for row in conn.execute("PRAGMA table_info(documents)")}
+    columns = (
+        ("source_kind", "TEXT NOT NULL DEFAULT 'operational'"),
+        ("page_role", "TEXT NOT NULL DEFAULT 'operational'"),
+        ("project_id", "TEXT"),
+        ("updated_at_ns", "INTEGER NOT NULL DEFAULT 0"),
+        ("is_route_map", "INTEGER NOT NULL DEFAULT 0"),
+    )
+    for name, definition in columns:
+        if name not in existing_columns:
+            conn.execute(f"ALTER TABLE documents ADD COLUMN {name} {definition}")
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_documents_corpus_profile "
+        "ON documents(source_kind, page_role, project_id)"
+    )
+
+
 Migration = Callable[[sqlite3.Connection], None]
 _MIGRATIONS: dict[int, Migration] = {
     0: _migrate_v0_to_v1,
     1: _migrate_v1_to_v2,
     2: _migrate_v2_to_v3,
     3: _migrate_v3_to_v4,
+    4: _migrate_v4_to_v5,
 }
 
 
@@ -176,6 +238,29 @@ def set_rebuild_state(conn: sqlite3.Connection, state: str) -> None:
         conn.execute(
             "INSERT OR REPLACE INTO projection_meta(key, value) VALUES ('rebuild_state', ?)",
             (state,),
+        )
+
+
+def projection_metadata_matches(conn: sqlite3.Connection, expected: Mapping[str, str]) -> bool:
+    """Return whether every expected compatibility key has the stored value."""
+    if not expected:
+        return True
+    placeholders = ",".join("?" * len(expected))
+    rows = conn.execute(
+        f"SELECT key, value FROM projection_meta WHERE key IN ({placeholders})",
+        list(expected),
+    ).fetchall()
+    return {str(key): str(value) for key, value in rows} == dict(expected)
+
+
+def set_projection_metadata(conn: sqlite3.Connection, values: Mapping[str, str]) -> None:
+    """Persist compatibility metadata atomically without disturbing rebuild state."""
+    if not values:
+        return
+    with transaction(conn):
+        conn.executemany(
+            "INSERT OR REPLACE INTO projection_meta(key, value) VALUES (?, ?)",
+            list(values.items()),
         )
 
 
@@ -368,10 +453,12 @@ def connect(db_path: Path) -> Iterator[sqlite3.Connection]:
     The caller is responsible for committing; the context manager
     closes the connection on exit and rolls back on exception.
     """
-    db_path.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(str(db_path), isolation_level=None)
-    try:
+    _secure_projection_storage(db_path)
+    with _private_umask():
+        conn = sqlite3.connect(str(db_path), isolation_level=None)
         conn.execute("PRAGMA journal_mode = WAL")
+    try:
+        _secure_projection_storage(db_path)
         conn.execute("PRAGMA synchronous = NORMAL")
         conn.execute("PRAGMA foreign_keys = ON")
         # Load sqlite-vec; required for the chunk_embeddings virtual table.

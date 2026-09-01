@@ -2,8 +2,10 @@
 
 from pathlib import Path
 
+import click
 import pytest
 
+from llmwiki.cli import _resolve_settings
 from llmwiki.config import Settings, _default_user_data_dir
 
 
@@ -30,3 +32,14 @@ def test_from_env_honours_llmwiki_db(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("LLMWIKI_DB", "/tmp/custom/llmwiki.sqlite")
     s = Settings.from_env()
     assert s.db_path == Path("/tmp/custom/llmwiki.sqlite").resolve()
+
+
+def test_index_settings_require_a_vault_flag_or_environment_value(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Indexing must not silently treat the process working directory as a vault."""
+    monkeypatch.delenv("LLMWIKI_VAULT", raising=False)
+    monkeypatch.chdir(tmp_path)
+
+    with pytest.raises(click.UsageError, match="--vault or LLMWIKI_VAULT"):
+        _resolve_settings(vault=None, db=None, watch=False, require_vault=True)

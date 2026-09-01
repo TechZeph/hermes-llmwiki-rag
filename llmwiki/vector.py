@@ -29,6 +29,11 @@ from collections.abc import Sequence
 
 from . import db as dbmod
 
+# sqlite-vec's vec0 KNN implementation rejects limits above this value.
+# Keep the bound in the storage adapter so every caller is safe, including
+# profile filtering paths that intentionally retrieve a broad candidate set.
+SQLITE_VEC_MAX_KNN_RESULTS = 4096
+
 
 class VectorStore(ABC):
     """Abstract vector store.
@@ -161,6 +166,7 @@ class SqliteVecStore(VectorStore):
     def search(self, query: Sequence[float], top_k: int) -> list[tuple[int, float]]:
         if top_k <= 0:
             return []
+        top_k = min(top_k, SQLITE_VEC_MAX_KNN_RESULTS)
         import sqlite_vec  # local import to avoid hard dep at module import time
 
         q_bytes = sqlite_vec.serialize_float32([float(x) for x in query])
@@ -182,4 +188,4 @@ class SqliteVecStore(VectorStore):
         return [(int(cid), float(dist)) for cid, dist in rows]
 
 
-__all__ = ["SqliteVecStore", "VectorStore"]
+__all__ = ["SQLITE_VEC_MAX_KNN_RESULTS", "SqliteVecStore", "VectorStore"]

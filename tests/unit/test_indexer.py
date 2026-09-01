@@ -12,7 +12,7 @@ import pytest
 
 from llmwiki import db as dbmod
 from llmwiki.config import Settings
-from llmwiki.indexer import Indexer
+from llmwiki.indexer import Indexer, iter_vault_files, resolve_contained
 
 
 def _vault(notes: dict[str, str]) -> Path:
@@ -187,3 +187,58 @@ def test_missing_vault_path_raises(tmp_path: Path) -> None:
     settings = _settings(tmp_path / "does-not-exist", tmp_path / "db.sqlite")
     with pytest.raises(FileNotFoundError):
         Indexer(settings).run()
+
+
+def test_resolve_contained_rejects_symlinks_even_when_target_is_inside_vault(tmp_path: Path) -> None:
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    target = vault / "target.md"
+    target.write_text("# Target", encoding="utf-8")
+    (vault / "linked.md").symlink_to(target)
+
+    with pytest.raises(ValueError, match="symlink"):
+        resolve_contained(vault, vault / "linked.md")
+
+
+def test_indexer_skips_file_and_directory_symlinks(tmp_path: Path) -> None:
+    vault = _vault({"safe.md": "# Safe"})
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "secret.md").write_text("# Secret", encoding="utf-8")
+    (vault / "file-link.md").symlink_to(outside / "secret.md")
+    (vault / "directory-link").symlink_to(outside, target_is_directory=True)
+
+    files = list(iter_vault_files(vault, _settings(vault, tmp_path / "db.sqlite")))
+
+    assert [file.rel_path for file in files] == ["safe.md"]
+
+
+def test_indexer_persists_path_derived_corpus_metadata(tmp_path: Path) -> None:
+    """Indexing stores classification needed to filter retrieval by profile."""
+    vault = _vault(
+        {
+            "wiki/current-topic.md": "# Current topic\n\nbody",
+            "wiki/log.md": "# Log\n\nhistory",
+            "wiki/projects/hosp-core/current-state.md": "# Current\n\nstate",
+            "raw/papers/evidence.md": "# Evidence\n\nsource",
+            "Clippings/ideas/rough-note.md": "# Rough note\n\nidea",
+        }
+    )
+    db = tmp_path / "llmwiki.sqlite"
+
+    Indexer(_settings(vault, db)).run()
+
+    with dbmod.connect(db) as conn:
+        rows = conn.execute(
+            "SELECT path, source_kind, page_role, project_id, updated_at_ns, is_route_map "
+            "FROM documents ORDER BY path"
+        ).fetchall()
+
+    assert [(path, kind, role, project_id, route_map) for path, kind, role, project_id, _, route_map in rows] == [
+        ("Clippings/ideas/rough-note.md", "clipping", "idea", None, 0),
+        ("raw/papers/evidence.md", "raw", "evidence", None, 0),
+        ("wiki/current-topic.md", "wiki", "durable", None, 0),
+        ("wiki/log.md", "wiki", "log", None, 0),
+        ("wiki/projects/hosp-core/current-state.md", "wiki", "current-state", "hosp-core", 0),
+    ]
+    assert all(isinstance(updated_at_ns, int) and updated_at_ns > 0 for *_, updated_at_ns, _ in rows)

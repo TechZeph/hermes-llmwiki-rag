@@ -25,6 +25,33 @@ from __future__ import annotations
 import os
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
+from importlib.metadata import version
+
+
+def model_provenance(model_name: str) -> dict[str, str]:
+    """Return the local FastEmbed package and registered artifact identity.
+
+    FastEmbed's registry exposes a package/version and model artifact source,
+    but not an immutable artifact checksum. Operators must therefore retain the
+    provisioned cache when exact byte-for-byte reproduction matters.
+    """
+    from fastembed import TextEmbedding
+
+    artifact_source = "unknown"
+    for model in TextEmbedding.list_supported_models():
+        if str(model.get("model")) != model_name:
+            continue
+        sources = model.get("sources", {})
+        if isinstance(sources, dict):
+            source = sources.get("hf") or sources.get("url")
+            if isinstance(source, str) and source:
+                artifact_source = source
+        break
+    return {
+        "embedding.backend": "fastembed",
+        "embedding.backend_version": version("fastembed"),
+        "embedding.artifact_source": artifact_source,
+    }
 
 
 class Embedder(ABC):

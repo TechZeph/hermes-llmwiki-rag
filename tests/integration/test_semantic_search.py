@@ -15,6 +15,8 @@ from __future__ import annotations
 from collections.abc import Sequence
 from pathlib import Path
 
+import pytest
+
 from llmwiki import db as dbmod
 from llmwiki.config import Settings
 from llmwiki.embeddings import Embedder
@@ -65,6 +67,18 @@ class KeywordEmbedder(Embedder):
                     v[idx] = 1.0
             out.append(v)
         return out
+
+
+class RecordingEmbedder(KeywordEmbedder):
+    """Keyword embedder that exposes the exact text passed to embedding."""
+
+    def __init__(self, keywords: Sequence[str], dim: int = _PROD_DIM) -> None:
+        super().__init__(keywords, dim)
+        self.calls: list[tuple[str, ...]] = []
+
+    def embed(self, texts: Sequence[str]) -> list[list[float]]:
+        self.calls.append(tuple(texts))
+        return super().embed(texts)
 
 
 def _make_vault(root: Path) -> None:
@@ -176,3 +190,83 @@ def test_indexed_run_is_incremental(tmp_path: Path) -> None:
     assert s2.documents_skipped == 1
     assert s2.embeddings_built == 0
     assert s2.embeddings_rebuilt == 0
+
+
+def test_no_embed_update_removes_superseded_vectors(tmp_path: Path) -> None:
+    """A metadata-only reindex must not leave vectors for replaced chunks behind."""
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    note = vault / "note.md"
+    note.write_text("# Note\n\napple first version\n", encoding="utf-8")
+    db_path = tmp_path / "test.sqlite"
+    settings = Settings(vault_path=vault, db_path=db_path)
+    embedder = KeywordEmbedder(keywords=["apple"])
+
+    Indexer(settings, embedder=embedder).run()
+    note.write_text("# Note\n\napple replacement version\n", encoding="utf-8")
+    Indexer(settings).run()
+
+    report = dbmod.inspect_integrity(db_path, vault_path=vault)
+    assert report["orphan_vectors"] == 0
+
+
+def test_indexer_embeds_structural_document_recipe(tmp_path: Path) -> None:
+    """The document embedding input includes structural metadata, not body text alone."""
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    (vault / "note.md").write_text(
+        """---
+aliases: [RAG architecture]
+tags: [rag, retrieval]
+---
+
+# Architecture
+
+## Embedding recipe
+
+apple body text
+""",
+        encoding="utf-8",
+    )
+    db_path = tmp_path / "test.sqlite"
+    embedder = RecordingEmbedder(keywords=["apple"])
+
+    Indexer(Settings(vault_path=vault, db_path=db_path), embedder=embedder).run()
+
+    assert embedder.calls == [
+        (
+            "Title: Architecture\n"
+            "Heading: Architecture > Embedding recipe\n"
+            "Aliases: RAG architecture\n"
+            "Tags: rag, retrieval\n"
+            "\n"
+            "apple body text",
+        )
+    ]
+    with dbmod.connect(db_path) as conn:
+        state = dict(
+            conn.execute(
+                "SELECT key, value FROM projection_meta WHERE key LIKE 'recipe.%' ORDER BY key"
+            ).fetchall()
+        )
+    assert state == {
+        "recipe.chunker": "chunker-v1-heading-char-2000",
+        "recipe.corpus_policy": "corpus-v1-path-profiles",
+        "recipe.document_embedding": "document-v1-structural",
+        "recipe.embedding_dimension": "384",
+        "recipe.embedding_model": "BAAI/bge-small-en-v1.5",
+        "recipe.query_embedding": "query-v1-raw",
+    }
+
+
+def test_indexer_rejects_embedder_dimension_that_cannot_fit_vector_schema(tmp_path: Path) -> None:
+    """A configured model must prove its actual output dimension before indexing."""
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    (vault / "note.md").write_text("# Note\n\napple body\n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="embedder dimension does not match configured vector schema"):
+        Indexer(
+            Settings(vault_path=vault, db_path=tmp_path / "test.sqlite"),
+            embedder=KeywordEmbedder(keywords=["apple"], dim=3),
+        ).run()

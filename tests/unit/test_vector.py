@@ -118,6 +118,17 @@ def test_store_starts_empty(tmp_path: Path) -> None:
         assert store.search([0.0, 0.0, 0.0, 0.0], top_k=5) == []
 
 
+def test_search_caps_requests_at_sqlite_vec_knn_limit(tmp_path: Path) -> None:
+    """Search remains usable when callers request more than vec0 permits."""
+    db = tmp_path / "test.sqlite"
+    with dbmod.connect(db) as conn:
+        dbmod.init_schema(conn)
+        store = _make_store(conn)
+        store.upsert([1], [[1.0, 0.0, 0.0, 0.0]])
+
+        assert store.search([1.0, 0.0, 0.0, 0.0], top_k=4097) == [(1, 0.0)]
+
+
 def test_upsert_and_search_round_trip(tmp_path: Path) -> None:
     db = tmp_path / "test.sqlite"
     with dbmod.connect(db) as conn:
@@ -310,6 +321,66 @@ class FailingEmbedder(FakeEmbedder):
         if any("FAIL_EMBED" in text for text in texts):
             raise RuntimeError("injected embedding failure")
         return super().embed(texts)
+
+
+class AlwaysFailingEmbedder(FakeEmbedder):
+    """Fails a forced full re-embedding before it can replace old vectors."""
+
+    def embed(self, texts: Sequence[str]) -> list[list[float]]:
+        raise RuntimeError("injected re-embedding failure")
+
+
+def test_indexer_preserves_existing_vectors_when_full_reembedding_fails(tmp_path: Path) -> None:
+    """A failed recipe/model migration never clears the last complete vector set."""
+    from llmwiki.config import Settings
+    from llmwiki.indexer import Indexer
+
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    (vault / "note.md").write_text("# Note\n\noriginal body\n")
+    db_path = tmp_path / "test.sqlite"
+    settings = Settings(vault_path=vault, db_path=db_path)
+
+    Indexer(settings, embedder=FakeEmbedder(dim=384)).run()
+    with dbmod.connect(db_path) as conn:
+        conn.execute("UPDATE chunk_embeddings SET embedding_model = 'legacy-model'")
+        before_ids = [row[0] for row in conn.execute("SELECT chunk_id FROM chunk_embeddings")]
+
+    with pytest.raises(RuntimeError, match="injected re-embedding failure"):
+        Indexer(settings, embedder=AlwaysFailingEmbedder(dim=384)).run()
+
+    with dbmod.connect(db_path) as conn:
+        after_rows = conn.execute(
+            "SELECT chunk_id, embedding_model FROM chunk_embeddings ORDER BY chunk_id"
+        ).fetchall()
+    assert [row[0] for row in after_rows] == before_ids
+    assert {row[1] for row in after_rows} == {"legacy-model"}
+
+
+def test_indexer_persists_fastembed_artifact_provenance_with_the_projection(tmp_path: Path) -> None:
+    """The dense projection records its runtime package and model artifact source."""
+    from llmwiki.config import Settings
+    from llmwiki.indexer import Indexer
+
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    (vault / "note.md").write_text("# Note\n\nbody\n", encoding="utf-8")
+    db_path = tmp_path / "test.sqlite"
+
+    Indexer(Settings(vault_path=vault, db_path=db_path), embedder=FakeEmbedder(dim=384)).run()
+
+    with dbmod.connect(db_path) as conn:
+        provenance = dict(
+            conn.execute(
+                "SELECT key, value FROM projection_meta "
+                "WHERE key IN ('embedding.backend', 'embedding.backend_version', "
+                "'embedding.artifact_source')"
+            ).fetchall()
+        )
+
+    assert provenance["embedding.backend"] == "fastembed"
+    assert provenance["embedding.backend_version"]
+    assert provenance["embedding.artifact_source"] == "qdrant/bge-small-en-v1.5-onnx-q"
 
 
 def test_indexer_rolls_back_document_projection_when_embedding_fails(tmp_path: Path) -> None:

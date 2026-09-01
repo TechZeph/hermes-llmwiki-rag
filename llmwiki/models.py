@@ -39,6 +39,11 @@ class Document:
     wikilinks: tuple[str, ...] = ()
     aliases: tuple[str, ...] = ()
     headings: tuple[dict[str, Any], ...] = ()  # [{"level": int, "text": str}, ...]
+    source_kind: str = "operational"
+    page_role: str = "operational"
+    project_id: str | None = None
+    updated_at_ns: int = 0
+    is_route_map: bool = False
 
 
 @dataclass(frozen=True, slots=True)

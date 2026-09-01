@@ -31,16 +31,38 @@ from . import db as dbmod
 from .chunker import chunk_document
 from .chunks import delete_chunks_for_document, insert_chunks
 from .config import Settings
-from .embeddings import Embedder
+from .corpus import classify_path
+from .embeddings import Embedder, model_provenance
 from .logging import get_logger
 from .models import Document, IndexRunStats
 from .parser import ParsedDocument, parse_markdown
+from .recipes import embedding_recipe_state, format_document_embedding_input
 from .vector import SqliteVecStore, VectorStore
 
 logger = get_logger("indexer")
 
 
 # --- filesystem walk --------------------------------------------------------
+
+
+def resolve_contained(vault_root: Path, candidate: Path) -> Path:
+    """Resolve one regular vault file without following symlinks.
+
+    The returned path is guaranteed to resolve inside ``vault_root``. Callers
+    must invoke this immediately before each stat or open because a path can
+    change between discovery and use.
+    """
+    root = vault_root.resolve(strict=True)
+    if candidate.is_symlink():
+        raise ValueError("refusing symlinked vault path")
+    resolved = candidate.resolve(strict=True)
+    try:
+        resolved.relative_to(root)
+    except ValueError as exc:
+        raise ValueError("candidate resolves outside configured vault") from exc
+    if not resolved.is_file():
+        raise ValueError("candidate is not a regular file")
+    return resolved
 
 
 @dataclass(frozen=True, slots=True)
@@ -71,20 +93,26 @@ def _should_skip(
 
 def iter_vault_files(vault: Path, settings: Settings) -> Iterator[VaultFile]:
     """Yield every non-skipped ``.md`` file under the vault, relative paths."""
-    vault = vault.resolve()
+    vault = vault.resolve(strict=True)
     for root, dirs, files in os.walk(vault):
-        # In-place prune of ``.obsidian`` etc so ``os.walk`` skips subtrees.
-        dirs[:] = sorted(d for d in dirs if d not in settings.ignored_dirs)
+        # In-place prune of operational and symlinked directories so ``os.walk``
+        # cannot traverse a vault boundary through a link.
+        dirs[:] = sorted(
+            d
+            for d in dirs
+            if d not in settings.ignored_dirs and not (Path(root) / d).is_symlink()
+        )
         for name in sorted(files):
             if not name.endswith(".md"):
                 continue
-            abs_path = Path(root) / name
-            rel_path = abs_path.relative_to(vault).as_posix()
+            candidate = Path(root) / name
+            rel_path = candidate.relative_to(vault).as_posix()
             if _should_skip(rel_path, settings.ignored_dirs, settings.ignored_globs):
                 continue
             try:
+                abs_path = resolve_contained(vault, candidate)
                 stat = abs_path.stat()
-            except OSError as exc:
+            except (OSError, ValueError) as exc:
                 logger.warning("stat failed for %s: %s", rel_path, exc)
                 continue
             yield VaultFile(
@@ -115,20 +143,27 @@ def _build_document_and_parsed(vf: VaultFile, vault: Path) -> tuple[Document, Pa
     that would duplicate the file's content in the database; the
     chunker reads the body once during indexing and persists chunks.
     """
-    parsed = parse_markdown(str(vf.abs_path))
+    abs_path = resolve_contained(vault, vf.abs_path)
+    parsed = parse_markdown(str(abs_path))
+    metadata = classify_path(vf.rel_path)
     doc = Document(
         id=None,
         path=vf.rel_path,
-        absolute_path=str(vf.abs_path),
-        title=parsed.title or vf.abs_path.stem,
+        absolute_path=str(abs_path),
+        title=parsed.title or abs_path.stem,
         mtime_ns=vf.mtime_ns,
         size_bytes=vf.size_bytes,
-        content_hash=_sha256(vf.abs_path),
+        content_hash=_sha256(abs_path),
         frontmatter=parsed.frontmatter,
         tags=parsed.tags,
         wikilinks=parsed.wikilinks,
         aliases=parsed.aliases,
         headings=parsed.headings,
+        source_kind=metadata["source_kind"],
+        page_role=metadata["page_role"],
+        project_id=metadata["project_id"],
+        updated_at_ns=vf.mtime_ns,
+        is_route_map=metadata["is_route_map"],
     )
     return doc, parsed
 
@@ -155,6 +190,11 @@ def _upsert_document(conn: sqlite3.Connection, doc: Document) -> int:
         json.dumps(list(doc.aliases), ensure_ascii=False),
         json.dumps(list(doc.headings), ensure_ascii=False),
         now_ns,
+        doc.source_kind,
+        doc.page_role,
+        doc.project_id,
+        doc.updated_at_ns,
+        int(doc.is_route_map),
     )
     if existing is None:
         cursor = conn.execute(
@@ -162,16 +202,32 @@ def _upsert_document(conn: sqlite3.Connection, doc: Document) -> int:
             INSERT INTO documents (
                 path, absolute_path, title, mtime_ns, size_bytes, content_hash,
                 frontmatter_json, tags_json, wikilinks_json, aliases_json, headings_json,
-                indexed_at_ns
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                indexed_at_ns, source_kind, page_role, project_id, updated_at_ns, is_route_map
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             payload,
         )
         return int(cursor.lastrowid or 0)
     row_id, prev_hash, prev_mtime = existing
     if prev_hash == doc.content_hash and prev_mtime == doc.mtime_ns:
-        # No change. Touch indexed_at so liveness is visible, but do not rewrite.
-        conn.execute("UPDATE documents SET indexed_at_ns = ? WHERE id = ?", (now_ns, row_id))
+        # Refresh deterministic classification even when content is unchanged so
+        # a schema upgrade backfills metadata without needless rechunking.
+        conn.execute(
+            """
+            UPDATE documents SET indexed_at_ns = ?, source_kind = ?, page_role = ?,
+                project_id = ?, updated_at_ns = ?, is_route_map = ?
+            WHERE id = ?
+            """,
+            (
+                now_ns,
+                doc.source_kind,
+                doc.page_role,
+                doc.project_id,
+                doc.updated_at_ns,
+                int(doc.is_route_map),
+                row_id,
+            ),
+        )
         return int(row_id)
     conn.execute(
         """
@@ -179,7 +235,8 @@ def _upsert_document(conn: sqlite3.Connection, doc: Document) -> int:
             absolute_path = ?, title = ?, mtime_ns = ?, size_bytes = ?,
             content_hash = ?, frontmatter_json = ?, tags_json = ?,
             wikilinks_json = ?, aliases_json = ?, headings_json = ?,
-            indexed_at_ns = ?
+            indexed_at_ns = ?, source_kind = ?, page_role = ?, project_id = ?,
+            updated_at_ns = ?, is_route_map = ?
         WHERE id = ?
         """,
         (
@@ -194,6 +251,11 @@ def _upsert_document(conn: sqlite3.Connection, doc: Document) -> int:
             json.dumps(list(doc.aliases), ensure_ascii=False),
             json.dumps(list(doc.headings), ensure_ascii=False),
             now_ns,
+            doc.source_kind,
+            doc.page_role,
+            doc.project_id,
+            doc.updated_at_ns,
+            int(doc.is_route_map),
             row_id,
         ),
     )
@@ -291,9 +353,22 @@ class Indexer:
             # provided. The store is local to this run because its
             # connection lifetime matches the run; caching it on
             # ``self`` would dangle after the first run.
+            cleanup_store = self.vector_store or SqliteVecStore(conn)
             vector_store: VectorStore | None = None
+            recipe_state: dict[str, str] = {}
             if self.embedder is not None:
-                vector_store = self.vector_store or SqliteVecStore(conn)
+                vector_store = cleanup_store
+                actual_dim = self.embedder.dim
+                if actual_dim != self.settings.embedding_dim:
+                    raise ValueError(
+                        "embedder dimension does not match configured vector schema "
+                        f"({actual_dim} != {self.settings.embedding_dim})"
+                    )
+                recipe_state = embedding_recipe_state(
+                    model_name=self.settings.embedding_model,
+                    dimension=actual_dim,
+                )
+                recipe_state.update(model_provenance(self.settings.embedding_model))
             run_id = _begin_run(conn, started_ns, mode)
 
             # Phase 3: model-change detection. If the database already
@@ -302,13 +377,15 @@ class Indexer:
             # regardless of whether the chunk text changed.
             reembed_all = False
             if vector_store is not None:
-                reembed_all = _needs_full_reembed(
-                    conn, expected_model=self.settings.embedding_model
-                )
+                reembed_all = _needs_full_reembed(conn, expected_model=self.settings.embedding_model)
+                if vector_store.count() > 0:
+                    reembed_all = reembed_all or not dbmod.projection_metadata_matches(
+                        conn, recipe_state
+                    )
                 if reembed_all:
                     logger.warning(
-                        "embedding model mismatch detected "
-                        "(expected %r); rebuilding every chunk embedding",
+                        "embedding model or recipe mismatch detected; rebuilding every chunk embedding "
+                        "(expected model %r)",
                         self.settings.embedding_model,
                     )
 
@@ -360,8 +437,7 @@ class Indexer:
                         old_ids: list[int] = []
                         if prev is not None:
                             old_ids = delete_chunks_for_document(conn, doc_id)
-                            if vector_store is not None:
-                                vector_store.delete(old_ids)
+                            cleanup_store.delete(old_ids)
                         ids = _chunk_and_persist(conn, doc_id, parsed)
                         n = 0
                         if vector_store is not None:
@@ -408,6 +484,8 @@ class Indexer:
                 embeddings_rebuilt,
                 errors,
             )
+            if vector_store is not None and not errors and vector_store.count() == count_chunks(conn):
+                dbmod.set_projection_metadata(conn, recipe_state)
             if mode == "full":
                 dbmod.set_rebuild_state(conn, "ready" if not errors else "failed")
 
@@ -505,11 +583,16 @@ def _embed_chunks(
         return 0
     placeholders = ",".join("?" * len(chunk_ids))
     rows = conn.execute(
-        f"SELECT id, text FROM chunks WHERE id IN ({placeholders}) ORDER BY id",
+        f"""
+        SELECT c.id, c.text, c.heading_path_json, d.title, d.aliases_json, d.tags_json
+        FROM chunks c
+        JOIN documents d ON d.id = c.document_id
+        WHERE c.id IN ({placeholders})
+        ORDER BY c.id
+        """,
         list(chunk_ids),
     ).fetchall()
-    ids_ordered = [int(r[0]) for r in rows]
-    texts = [str(r[1]) for r in rows]
+    ids_ordered, texts = _document_embedding_inputs(rows)
     vectors = embedder.embed(texts)
     store.upsert(ids_ordered, vectors, embedding_model=model)
     return len(ids_ordered)
@@ -536,10 +619,25 @@ def _backfill_missing_embeddings(
     Returns the number of embeddings written.
     """
     if force:
-        # Wipe everything so we converge on ``model`` cleanly. This
-        # is the model-migration path; partial rewrites would leave
-        # the store in an inconsistent state.
-        conn.execute("DELETE FROM chunk_embeddings")
+        # Preserve the last complete projection until the replacement is ready.
+        # A model/recipe migration is all-or-nothing: clearing vec0 before a
+        # multi-minute backfill makes an interruption leave every chunk
+        # unsearchable. The transaction rolls the deletion and partial batch
+        # upserts back on an embedding failure or process interruption.
+        with dbmod.transaction(conn):
+            conn.execute("DELETE FROM chunk_embeddings")
+            rows = conn.execute("SELECT id FROM chunks ORDER BY id").fetchall()
+            ids_all = [int(r[0]) for r in rows]
+            if not ids_all:
+                return 0
+            return _embed_chunks_batched(
+                conn,
+                chunk_ids=ids_all,
+                embedder=embedder,
+                store=store,
+                model=model,
+            )
+
     else:
         # Target chunks with no corresponding vector row.
         rows = conn.execute(
@@ -562,25 +660,6 @@ def _backfill_missing_embeddings(
             store=store,
             model=model,
         )
-    # After wiping, embed every chunk in one batch (splitting if
-    # the batch is too big for memory). The vec0 store has no
-    # inherent batch limit; we chunk at 64 to keep FastEmbed's
-    # ONNX runtime peak memory bounded (each 384-dim float32
-    # vector is 1.5KB but the runtime's intermediate state is
-    # much larger).
-    rows = conn.execute("SELECT id FROM chunks ORDER BY id").fetchall()
-    ids_all = [int(r[0]) for r in rows]
-    if not ids_all:
-        return 0
-    return _embed_chunks_batched(
-        conn,
-        chunk_ids=ids_all,
-        embedder=embedder,
-        store=store,
-        model=model,
-    )
-
-
 def _embed_chunks_batched(
     conn: sqlite3.Connection,
     *,
@@ -607,11 +686,16 @@ def _embed_chunks_batched(
         batch_ids = chunk_ids[start : start + batch_size]
         placeholders = ",".join("?" * len(batch_ids))
         rows = conn.execute(
-            f"SELECT id, text FROM chunks WHERE id IN ({placeholders}) ORDER BY id",
+            f"""
+            SELECT c.id, c.text, c.heading_path_json, d.title, d.aliases_json, d.tags_json
+            FROM chunks c
+            JOIN documents d ON d.id = c.document_id
+            WHERE c.id IN ({placeholders})
+            ORDER BY c.id
+            """,
             batch_ids,
         ).fetchall()
-        ids_ordered = [int(r[0]) for r in rows]
-        texts = [str(r[1]) for r in rows]
+        ids_ordered, texts = _document_embedding_inputs(rows)
         vectors = embedder.embed(texts)
         store.upsert(ids_ordered, vectors, embedding_model=model)
         total += len(ids_ordered)
@@ -619,6 +703,32 @@ def _embed_chunks_batched(
         # initial backfill; quiet later.
         logger.info("backfill progress: %d/%d", total, n)
     return total
+
+
+def _document_embedding_inputs(rows: list[tuple[object, ...]]) -> tuple[list[int], list[str]]:
+    """Build the versioned structural embedding input for persisted chunks."""
+    ids: list[int] = []
+    texts: list[str] = []
+    for chunk_id, body, heading_path_json, title, aliases_json, tags_json in rows:
+        ids.append(int(str(chunk_id)))
+        heading_path = tuple(str(item) for item in json.loads(str(heading_path_json)))
+        aliases = tuple(str(item) for item in json.loads(str(aliases_json)))
+        tags = tuple(str(item) for item in json.loads(str(tags_json)))
+        texts.append(
+            format_document_embedding_input(
+                title=str(title),
+                heading_path=heading_path,
+                aliases=aliases,
+                tags=tags,
+                body=str(body),
+            )
+        )
+    return ids, texts
+
+
+def count_chunks(conn: sqlite3.Connection) -> int:
+    """Return the number of relational chunks expected to have one vector each."""
+    return int(conn.execute("SELECT COUNT(*) FROM chunks").fetchone()[0])
 
 
 def _delete_missing_chunks(conn: sqlite3.Connection, seen_paths: set[str]) -> int:

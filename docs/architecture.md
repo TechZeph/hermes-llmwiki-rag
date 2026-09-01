@@ -34,7 +34,7 @@ Use ordered transactional migrations. A document change must atomically replace 
 
 ## Chunk and embedding recipes
 
-Version chunking, document embedding, and query embedding independently. The initial document recipe to evaluate is title + heading breadcrumb + selected aliases/tags + body. Keep authority metadata outside semantic text. Persist model name/revision, actual dimension, all recipe versions, and corpus-policy version; incompatible changes require a controlled rebuild.
+Version chunking, document embedding, and query embedding independently. The initial document recipe to evaluate is title + heading breadcrumb + selected aliases/tags + body. Keep authority metadata outside semantic text. Persist model name, FastEmbed package version, registry artifact source, actual dimension, all recipe versions, and corpus-policy version; incompatible changes require a controlled rebuild. Preserve/cache artifact checksums externally when byte-level provenance is required.
 
 A configured model is valid only when its dimension and recipe are compatible with the active vector schema. Chunk-size, overlap, code/table/list handling, and long-paragraph behaviour are selected by evaluation rather than fixed by convention.
 
@@ -76,13 +76,13 @@ The current Hermes `pre_llm_call` hook injects returned context into the current
 
 ## Privacy and operations
 
-Document one-time model acquisition and an offline provisioning path; pin model revisions/checksums where possible. Create the database with restrictive permissions and document backup/deletion behaviour because it contains source text, frontmatter, paths, and vectors. Do not log raw history or full retrieved content by default. Absolute paths are diagnostic-only.
+Document one-time model acquisition and an offline provisioning path; pin model revisions/checksums where possible. On POSIX, the projection directory is `0700` and the SQLite/WAL/SHM files are `0600`; unsupported platforms must report that they cannot verify an equivalent guarantee. Document backup/deletion behaviour because the projection contains source text, frontmatter, paths, and vectors. Do not log raw history or full retrieved content by default. Absolute paths are diagnostic-only. See [`operations.md`](operations.md) for current operational limits.
 
 ## Roadmap and release gates
 
 ### Stabilization
 
-- Ordered migrations, true rebuild, and integrity checks are implemented; corpus profiles, authority metadata, versioned recipes, privacy defaults, and a vector baseline remain.
+- Ordered migrations, true rebuild, integrity checks, corpus profiles, authority metadata, versioned recipes, and restrictive POSIX projection permissions are implemented. A real-vault vector baseline remains.
 - Gate: zero derived-row orphans; fault-injection rollback passes; real-vault held-out evaluation and resource measurements recorded.
 
 ### V1 retrieval

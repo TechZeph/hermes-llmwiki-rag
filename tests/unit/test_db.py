@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import os
+import stat
 from pathlib import Path
 
 import pytest
@@ -9,10 +11,29 @@ import pytest
 from llmwiki import db as dbmod
 from llmwiki.config import Settings
 from llmwiki.indexer import Indexer
+from llmwiki.recipes import embedding_recipe_state
 
 
 def _settings(vault: Path, db_path: Path) -> Settings:
     return Settings(vault_path=vault, db_path=db_path, log_level="WARNING")
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX permission semantics required")
+def test_connect_creates_a_private_projection_directory_database_and_wal_sidecars(
+    tmp_path: Path,
+) -> None:
+    """Sensitive projection files must not inherit a permissive umask."""
+    db_path = tmp_path / "projection" / "llmwiki.sqlite"
+
+    with dbmod.connect(db_path) as conn:
+        conn.execute("CREATE TABLE private_data (value TEXT NOT NULL)")
+        conn.execute("INSERT INTO private_data VALUES ('sensitive')")
+        sidecars = [path for path in (db_path.with_name("llmwiki.sqlite-wal"), db_path.with_name("llmwiki.sqlite-shm")) if path.exists()]
+
+        assert stat.S_IMODE(db_path.parent.stat().st_mode) == 0o700
+        assert stat.S_IMODE(db_path.stat().st_mode) == 0o600
+        assert sidecars
+        assert all(stat.S_IMODE(path.stat().st_mode) == 0o600 for path in sidecars)
 
 
 def _create_legacy_v1_fixture(db_path: Path, note: Path) -> None:
@@ -95,7 +116,7 @@ def _create_legacy_v2_fixture(db_path: Path) -> None:
 
 
 def test_init_schema_upgrades_real_legacy_v1_fixture(tmp_path: Path) -> None:
-    """A released v1 database follows each historical transition to v4."""
+    """A released v1 database follows each historical transition to v5."""
     db_path = tmp_path / "legacy-v1.sqlite"
     note = tmp_path / "note.md"
     note.write_text("# Note\n\nbody\n", encoding="utf-8")
@@ -111,13 +132,13 @@ def test_init_schema_upgrades_real_legacy_v1_fixture(tmp_path: Path) -> None:
             "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'projection_meta'"
         ).fetchone()
 
-    assert version == "4"
+    assert version == "5"
     assert chunk_count >= 1
     assert projection_meta is not None
 
 
 def test_init_schema_upgrades_real_legacy_v2_fixture(tmp_path: Path) -> None:
-    """A released v2 database adds vec0 then v4 metadata without bootstrap DDL."""
+    """A released v2 database adds vec0 and later metadata without bootstrap DDL."""
     db_path = tmp_path / "legacy-v2.sqlite"
     _create_legacy_v2_fixture(db_path)
 
@@ -133,7 +154,7 @@ def test_init_schema_upgrades_real_legacy_v2_fixture(tmp_path: Path) -> None:
             "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'projection_meta'"
         ).fetchone()
 
-    assert version == "4"
+    assert version == "5"
     assert embedding_table is not None
     assert projection_meta is not None
 
@@ -141,7 +162,7 @@ def test_init_schema_upgrades_real_legacy_v2_fixture(tmp_path: Path) -> None:
 def test_init_schema_runs_historical_migrations_in_order_once(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A v1 database invokes v1→v2, v2→v3, then v3→v4 exactly once."""
+    """A v1 database invokes every later migration exactly once."""
     db_path = tmp_path / "ordered.sqlite"
     note = tmp_path / "note.md"
     note.write_text("# Note\n\nbody\n", encoding="utf-8")
@@ -157,13 +178,13 @@ def test_init_schema_runs_historical_migrations_in_order_once(
         return migration
 
     monkeypatch.setattr(
-        dbmod, "_MIGRATIONS", {version: record(version) for version in (1, 2, 3)}
+        dbmod, "_MIGRATIONS", {version: record(version) for version in (1, 2, 3, 4)}
     )
     with dbmod.connect(db_path) as conn:
         dbmod.init_schema(conn)
         dbmod.init_schema(conn)
 
-    assert calls == [1, 2, 3]
+    assert calls == [1, 2, 3, 4]
 
 
 def test_failed_historical_migration_rolls_back_prior_schema_and_version(
@@ -226,7 +247,7 @@ def test_init_schema_migrates_v3_database_to_current_version(tmp_path: Path) -> 
             "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'projection_meta'"
         ).fetchone()
 
-    assert version == "4"
+    assert version == "5"
     assert documents == [("note.md",)]
     assert metadata_table is not None
 
@@ -343,3 +364,18 @@ def test_integrity_does_not_migrate_or_mutate_projection(tmp_path: Path) -> None
         ).fetchone()
     assert version == "3"
     assert projection_meta is None
+
+
+def test_projection_recipe_state_is_persisted_and_compared_as_a_complete_contract(
+    tmp_path: Path,
+) -> None:
+    """Partial or changed recipe state cannot be mistaken for a compatible projection."""
+    db_path = tmp_path / "llmwiki.sqlite"
+    state = embedding_recipe_state(model_name="test-model", dimension=384)
+    with dbmod.connect(db_path) as conn:
+        dbmod.init_schema(conn)
+        assert dbmod.projection_metadata_matches(conn, state) is False
+        dbmod.set_projection_metadata(conn, state)
+        assert dbmod.projection_metadata_matches(conn, state) is True
+        changed = {**state, "recipe.document_embedding": "different"}
+        assert dbmod.projection_metadata_matches(conn, changed) is False

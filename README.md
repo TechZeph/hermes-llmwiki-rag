@@ -7,7 +7,7 @@ Local-first retrieval over an Obsidian vault, designed as a standalone plugin fo
 - Treats Markdown as canonical and SQLite/FTS/vector data as a rebuildable projection.
 - Indexes Markdown notes incrementally (new / modified / deleted / unchanged).
 - Currently provides heading-aware chunks, local FastEmbed embeddings, sqlite-vec storage, and vector-only CLI search.
-- Will add explicit corpus profiles and intent-specific authority policy before BM25/hybrid fusion.
+- Provides deterministic corpus profiles: curated `answer` (default), `project:<id>`, `evidence`, `history`, and diagnostic `all`.
 - Will add FTS5/BM25 and RRF; reranking ships only if held-out evaluation justifies its latency and memory.
 - Will expose explicit, cited Hermes tools for V1. Optional `pre_llm_call` injection is a calibrated, opt-in V1.1 feature.
 - Runs locally after one-time model provisioning. Retrieved Markdown is treated as untrusted reference data.
@@ -16,9 +16,10 @@ Local-first retrieval over an Obsidian vault, designed as a standalone plugin fo
 
 **Stage 0 stabilization after Phase 3 semantic retrieval.** Incremental indexing, structural chunking, local embeddings, sqlite-vec persistence, and vector-only CLI search are implemented and tested.
 
-Before FTS5, the project is defining corpus and authority policy, versioning embedding recipes, and establishing a real-vault held-out baseline. Ordered migrations, a true `index --mode full` rebuild, a read-only `integrity` command, transactional document projection updates, and source-deletion vector cleanup are implemented. BM25, integrated hybrid retrieval, reranking, authority-aware context/citations, Hermes tools, routing, and automatic injection are not implemented yet.
+Before FTS5, the project is establishing a real-vault held-out baseline. Ordered migrations, a true `index --mode full` rebuild, a read-only `integrity` command, transactional document projection updates, source-deletion vector cleanup, path-derived corpus metadata/profile filtering, and versioned structural embedding recipes are implemented. BM25, integrated hybrid retrieval, authority-aware result ranking/context/citations, Hermes tools, routing, and automatic injection are not implemented yet.
 
 See [`docs/architecture.md`](docs/architecture.md) for the current architecture, measurable release gates, Hermes hook constraints, privacy requirements, and scope boundaries.
+See [`docs/operations.md`](docs/operations.md) for projection permissions, offline model provisioning, and current backup/deletion limitations.
 
 ## Quick start
 
@@ -35,7 +36,8 @@ uv venv --python 3.14 .venv
 # 3. search the semantic index
 .venv/bin/llmwiki search \
   --db ./.data/llmwiki.sqlite \
-  --query "how does retrieval authority work?"
+  --query "how does retrieval authority work?" \
+  --profile answer
 
 # 4. inspect the database
 .venv/bin/llmwiki status --db ./.data/llmwiki.sqlite
