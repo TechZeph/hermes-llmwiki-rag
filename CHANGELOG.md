@@ -27,8 +27,13 @@ its Hermes plugin.
   `llmwiki_related`), an inert-by-default calibrated `pre_llm_call` hook, and
   an opt-in in-host vault watcher.
 - MCP stdio server exposing the same tools (`llmwiki mcp`).
-- CLI: `index` (with `--watch`), `search`, `status`, `integrity`, `related`,
-  `communities`, `bench`, `mcp`, and `eval validate|run|compare|regress|calibrate|report`.
+- CLI: `init` (vault discovery, starter vault, persistent config, first index),
+  `doctor`, `config show|set`, `index` (with `--watch`), `search`, `status`,
+  `integrity`, `related`, `communities`, `bench`, `mcp`, and
+  `eval validate|run|compare|regress|calibrate|report`.
+- Persistent user config at `~/.config/llmwiki/config.toml`; the Hermes plugin
+  falls back to it, and a `/llmwiki` slash command offers status, setup,
+  reindex and doctor inside sessions.
 - Evaluation harness with two real-vault golden sets, predeclared gates,
   reproducible run records, regression rule, and generated benchmarks.
 - Documentation: architecture, install, configuration, tools, security,

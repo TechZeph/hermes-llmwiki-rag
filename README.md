@@ -71,21 +71,24 @@ Single channels for comparison on v2 held-out: lexical hit@5 0.870 / MRR
 python -m venv .venv
 .venv/bin/python -m pip install -e ".[dev]"
 
-# 2. index a vault (first run embeds every chunk: ~45 min for 5k chunks)
-.venv/bin/llmwiki index --vault ~/Workspace/vaults/clanker-vault
+# 2. pick (or create) a vault, save it to ~/.config/llmwiki/config.toml, run the first index
+.venv/bin/llmwiki init                 # interactive: finds Obsidian vaults, or creates a starter vault
+.venv/bin/llmwiki init ~/my-vault      # or pass the path; --create PATH makes a starter vault
 
 # 3. search (hybrid by default) and print the LLM-ready context block
 .venv/bin/llmwiki search --query "why did we choose sqlite-vec?" --profile answer
 .venv/bin/llmwiki search --query "when did FTS5 land?" --profile history --context
 
-# 4. inspect
-.venv/bin/llmwiki status
-.venv/bin/llmwiki integrity --vault ~/Workspace/vaults/clanker-vault
+# 4. check everything (Python, SQLite/FTS5, model cache, config, projection, Hermes wiring)
+.venv/bin/llmwiki doctor
 ```
 
-The projection lives at `$XDG_DATA_HOME/llmwiki/llmwiki.sqlite` (default
-`~/.local/share/llmwiki/llmwiki.sqlite`) with `0700`/`0600` permissions. Set
-`LLMWIKI_VAULT` / `LLMWIKI_DB` to avoid repeating flags.
+`llmwiki init` never indexes a directory silently: without a configured vault
+every command that needs one stops and tells you to run it. The projection lives
+at `$XDG_DATA_HOME/llmwiki/llmwiki.sqlite` (default
+`~/.local/share/llmwiki/llmwiki.sqlite`) with `0700`/`0600` permissions.
+Precedence for every setting: CLI flag > `LLMWIKI_*` environment > config file
+> default (`llmwiki config show` prints the effective values).
 
 ## MCP server (any agent)
 
@@ -103,9 +106,13 @@ Client config and details: `docs/install.md`.
 ~/.hermes/hermes-agent/venv/bin/pip install -e /path/to/hermes-llmwiki-rag
 ln -s /path/to/hermes-llmwiki-rag/hermes_plugin ~/.hermes/plugins/llmwiki
 hermes plugins enable llmwiki --no-allow-tool-override
-hermes config set plugins.entries.llmwiki.settings.vault /path/to/vault
 hermes plugins doctor /path/to/hermes-llmwiki-rag/hermes_plugin --ci
 ```
+
+The plugin uses the vault from `llmwiki init` automatically; pin a different one
+with `hermes config set plugins.entries.llmwiki.settings.vault /path/to/vault` or,
+inside a session, `/llmwiki setup /path/to/vault`. `/llmwiki status`,
+`/llmwiki reindex` and `/llmwiki doctor` are also available as slash commands.
 
 Settings (all under `plugins.entries.llmwiki.settings`) are listed in
 `docs/configuration.md`; the tool contract is in `docs/tools.md`. Set

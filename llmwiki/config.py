@@ -42,6 +42,10 @@ def _default_user_data_dir() -> Path:
     return Path.home() / ".local" / "share" / "llmwiki"
 
 
+_UNSET_VAULT = Path("/nonexistent/llmwiki-vault-not-configured")
+"""Sentinel used when no vault is configured anywhere."""
+
+
 @dataclass(frozen=True, slots=True)
 class Settings:
     """All configuration the RAG core needs to start.
@@ -128,16 +132,23 @@ class Settings:
 
         Recognised variables:
 
-        - ``LLMWIKI_VAULT`` (default: current working directory)
+        - ``LLMWIKI_VAULT`` (default: ``vault`` from ``~/.config/llmwiki/config.toml``;
+          unset otherwise, see :data:`_UNSET_VAULT`)
         - ``LLMWIKI_DB``   (default: ``$XDG_DATA_HOME/llmwiki/llmwiki.sqlite``
           or ``~/.local/share/llmwiki/llmwiki.sqlite``)
         - ``LLMWIKI_FILE_WATCH`` (default: "0")
         - ``LLMWIKI_LOG_LEVEL``  (default: "INFO")
         - ``LLMWIKI_LOG_FORMAT`` (default: "text")
         """
-        vault = Path(_env("LLMWIKI_VAULT", os.getcwd())).expanduser().resolve()
-        default_db = _default_user_data_dir() / "llmwiki.sqlite"
-        db = Path(_env("LLMWIKI_DB", str(default_db))).expanduser().resolve()
+        from .userconfig import load_user_config
+
+        user = load_user_config()
+        vault_value = _env("LLMWIKI_VAULT", user.get("vault", ""))
+        # No silent cwd fallback: an unset vault resolves to a sentinel that
+        # every vault-requiring command rejects with a clear message.
+        vault = Path(vault_value).expanduser().resolve() if vault_value else _UNSET_VAULT
+        default_db = user.get("db") or str(_default_user_data_dir() / "llmwiki.sqlite")
+        db = Path(_env("LLMWIKI_DB", default_db)).expanduser().resolve()
         watch_raw = _env("LLMWIKI_FILE_WATCH", "0").lower()
         watch = watch_raw in ("1", "true", "yes", "on")
         return Settings(
@@ -146,7 +157,14 @@ class Settings:
             file_watch=watch,
             log_level=_env("LLMWIKI_LOG_LEVEL", "INFO"),
             log_format=_env("LLMWIKI_LOG_FORMAT", "text"),
+            retrieval_mode=user.get("retrieval_mode", "hybrid") or "hybrid",
+            embedding_model=user.get("embedding_model", "BAAI/bge-small-en-v1.5")
+            or "BAAI/bge-small-en-v1.5",
         )
 
+    @property
+    def vault_configured(self) -> bool:
+        return self.vault_path != _UNSET_VAULT
 
-__all__ = ["Settings"]
+
+__all__ = ["_UNSET_VAULT", "Settings"]

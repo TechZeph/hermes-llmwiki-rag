@@ -1,8 +1,12 @@
 # Configuration
 
-Configuration is layered: package defaults → host settings (Hermes plugin
-settings or MCP/CLI flags) → per-call tool arguments. The core never reads
-environment variables except in `Settings.from_env()` for CLI bootstrap.
+Configuration is layered, lowest to highest precedence: package defaults →
+user config file (`~/.config/llmwiki/config.toml`, written by `llmwiki init`
+and `llmwiki config set`; `LLMWIKI_CONFIG` or `XDG_CONFIG_HOME` relocate it) →
+`LLMWIKI_*` environment variables → host settings (Hermes plugin settings or
+MCP/CLI flags) → per-call tool arguments. The user file holds `vault`, `db`,
+`default_profile`, `retrieval_mode`, `embedding_model`. The Hermes plugin
+falls back to the file's `vault` when `settings.vault` is unset.
 
 ## Core settings (`llmwiki.config.Settings`)
 

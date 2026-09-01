@@ -36,9 +36,11 @@ def _resolve_settings(
     """Build Settings from CLI flags, falling back to env / defaults."""
     from .config import Settings as _Settings
 
-    if require_vault and vault is None and not os.environ.get("LLMWIKI_VAULT"):
-        raise click.UsageError("indexing requires --vault or LLMWIKI_VAULT; refusing to use cwd")
     base = _Settings.from_env()
+    if require_vault and vault is None and not base.vault_configured:
+        raise click.UsageError(
+            "no vault configured: pass --vault, set LLMWIKI_VAULT, or run `llmwiki init`"
+        )
     return _Settings(
         vault_path=(vault or base.vault_path).expanduser().resolve(),
         db_path=(db or base.db_path).expanduser().resolve(),
@@ -170,6 +172,171 @@ def index(
     )
     if stats.errors:
         sys.exit(1)
+
+
+@main.command()
+@click.argument("path", required=False, type=click.Path(path_type=Path))
+@click.option(
+    "--create",
+    "create_path",
+    type=click.Path(path_type=Path),
+    default=None,
+    help="Create a starter vault at this path",
+)
+@click.option(
+    "--db",
+    type=click.Path(dir_okay=False, path_type=Path),
+    default=None,
+    help="Projection location to persist",
+)
+@click.option(
+    "--index/--no-index", "run_index", default=None, help="Run the first index after setup"
+)
+@click.option("--yes", "-y", is_flag=True, help="Non-interactive: accept defaults")
+@click.option("--interactive", "force_interactive", is_flag=True, hidden=True)
+def init(
+    path: Path | None,
+    create_path: Path | None,
+    db: Path | None,
+    run_index: bool | None,
+    yes: bool,
+    force_interactive: bool,
+) -> None:
+    """Pick or create a vault, save it to ~/.config/llmwiki/config.toml, run the first index."""
+    from .setup import (
+        create_starter_vault,
+        discover_vaults,
+        estimate_first_index,
+        looks_like_vault,
+    )
+    from .userconfig import update_user_config
+
+    interactive = force_interactive or (not yes and sys.stdin.isatty())
+    chosen: Path | None = None
+    if create_path is not None:
+        chosen = create_starter_vault(create_path.expanduser().resolve())
+        click.echo(f"created starter vault at {chosen}")
+    elif path is not None:
+        chosen = path.expanduser().resolve()
+        if not chosen.is_dir():
+            raise click.BadParameter(
+                f"{chosen} is not a directory (use --create to make a starter vault)"
+            )
+        if not looks_like_vault(chosen):
+            click.echo(
+                "note: no .obsidian/ or wiki/ directory found; indexing it as a plain Markdown tree",
+                err=True,
+            )
+    elif interactive:
+        candidates = discover_vaults()
+        click.echo("Looking for Obsidian vaults under your home directory...")
+        for i, c in enumerate(candidates, start=1):
+            click.echo(f"  {i}. {c.path}  ({c.markdown_files} Markdown files)")
+        click.echo(f"  {len(candidates) + 1}. Enter a path")
+        click.echo(f"  {len(candidates) + 2}. Create a starter vault at ~/llmwiki-vault")
+        choice = click.prompt(
+            "Choose",
+            type=click.IntRange(1, len(candidates) + 2),
+            default=1 if candidates else len(candidates) + 2,
+        )
+        if choice <= len(candidates):
+            chosen = candidates[choice - 1].path
+        elif choice == len(candidates) + 1:
+            chosen = Path(click.prompt("Vault path", type=str)).expanduser().resolve()
+            if not chosen.is_dir():
+                raise click.ClickException(f"{chosen} is not a directory")
+        else:
+            chosen = create_starter_vault((Path.home() / "llmwiki-vault").resolve())
+            click.echo(f"created starter vault at {chosen}")
+    else:
+        raise click.UsageError("non-interactive: pass a vault PATH or --create PATH")
+
+    assert chosen is not None
+    updates = {"vault": str(chosen)}
+    if db is not None:
+        updates["db"] = str(db.expanduser().resolve())
+    cfg = update_user_config(updates)
+    click.echo(f"saved vault to {cfg}")
+    files, minutes = estimate_first_index(chosen)
+    click.echo(
+        f"vault has {files} Markdown files; a first index takes roughly {minutes} minute(s) and downloads the embedding model once if missing"
+    )
+    hermes_home = Path(os.environ.get("HERMES_HOME") or Path.home() / ".hermes")
+    if hermes_home.is_dir():
+        click.echo(
+            "Hermes detected: the plugin falls back to this config, or pin it with\n"
+            f"  hermes config set plugins.entries.llmwiki.settings.vault {chosen}"
+        )
+    do_index = run_index
+    if do_index is None:
+        do_index = click.confirm("Run the first index now?", default=True) if interactive else True
+    if not do_index:
+        click.echo("skipped indexing; run `llmwiki index` when ready")
+        return
+    from .embeddings import FastEmbedEmbedder
+
+    settings = _resolve_settings(vault=chosen, db=db, watch=False, require_vault=True)
+    embedder = FastEmbedEmbedder(model_name=settings.embedding_model)
+    stats = Indexer(settings, embedder=embedder).run(mode="incremental")
+    click.echo(
+        f"indexed {stats.documents_seen} documents, {stats.embeddings_built} embeddings, "
+        f'{len(stats.errors)} error(s). Try: llmwiki search --query "..."'
+    )
+    if stats.errors:
+        sys.exit(1)
+
+
+@main.command()
+@click.option("--json", "as_json", is_flag=True)
+def doctor(as_json: bool) -> None:
+    """Check Python, SQLite/FTS5/sqlite-vec, model cache, config, projection, and Hermes wiring."""
+    from .doctor import format_checks, run_doctor
+
+    checks = run_doctor()
+    if as_json:
+        from dataclasses import asdict
+
+        click.echo(json.dumps([asdict(c) for c in checks], indent=2))
+    else:
+        click.echo(format_checks(checks))
+    if any(c.status == "fail" for c in checks):
+        sys.exit(1)
+
+
+@main.group()
+def config() -> None:
+    """Show or edit ~/.config/llmwiki/config.toml."""
+
+
+@config.command("show")
+def config_show() -> None:
+    """Print the config file location and the effective settings."""
+    from .userconfig import config_path, load_user_config
+
+    path = config_path()
+    click.echo(f"file: {path} ({'present' if path.exists() else 'absent'})")
+    for k, v in load_user_config(path).items():
+        click.echo(f"  {k} = {v}")
+    base = Settings.from_env()
+    click.echo(f"effective vault: {base.vault_path if base.vault_configured else '(unset)'}")
+    click.echo(f"effective db:    {base.db_path}")
+    click.echo(f"retrieval_mode:  {base.retrieval_mode}; embedding_model: {base.embedding_model}")
+
+
+@config.command("set")
+@click.argument(
+    "key",
+    type=click.Choice(["vault", "db", "default_profile", "retrieval_mode", "embedding_model"]),
+)
+@click.argument("value")
+def config_set(key: str, value: str) -> None:
+    """Persist one setting."""
+    from .userconfig import update_user_config
+
+    if key in ("vault", "db"):
+        value = str(Path(value).expanduser().resolve())
+    path = update_user_config({key: value})
+    click.echo(f"set {key} in {path}")
 
 
 @main.command()

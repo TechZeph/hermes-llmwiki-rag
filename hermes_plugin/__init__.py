@@ -43,7 +43,8 @@ def register(ctx: Any) -> None:
         logger.warning(
             "llmwiki plugin loaded without a usable vault setting; tools will report the problem"
         )
-    handlers = make_handlers(runtime)
+    set_config = getattr(ctx, "set_config", None)
+    handlers = make_handlers(runtime, set_config=set_config if callable(set_config) else None)
 
     ctx.register_tool(
         name="llmwiki_search",
@@ -79,6 +80,15 @@ def register(ctx: Any) -> None:
     )
     # Always registered so the manifest and the runtime agree; it returns
     # None unless auto_inject is enabled and a calibrated gate exists.
+    register_command = getattr(ctx, "register_command", None)
+    if callable(register_command):
+        with contextlib.suppress(Exception):
+            register_command(
+                name="llmwiki",
+                handler=handlers.slash,
+                description="Wiki RAG: /llmwiki [status|setup <vault>|reindex|doctor]",
+                args_hint="[status|setup <vault>|reindex|doctor]",
+            )
     ctx.register_hook("pre_llm_call", handlers.pre_llm_call)
     ctx.register_hook("on_session_start", handlers.on_session_start)
     on_unload = getattr(ctx, "on_unload", None)

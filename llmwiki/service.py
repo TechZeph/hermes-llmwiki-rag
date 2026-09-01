@@ -111,11 +111,19 @@ def validate_profile(profile: str) -> str:
 
 
 def build_settings(config: ServiceConfig) -> Settings:
-    if not config.vault:
+    vault_value = config.vault
+    if not vault_value:
+        from .userconfig import configured_vault
+
+        fallback = configured_vault()
+        if fallback is not None:
+            vault_value = str(fallback)
+    if not vault_value:
         raise ConfigError(
-            "vault is not set (plugins.entries.llmwiki.settings.vault for Hermes, --vault for the CLI)"
+            "vault is not set: run `llmwiki init`, or set "
+            "plugins.entries.llmwiki.settings.vault (Hermes) / --vault (CLI)"
         )
-    vault = Path(config.vault).expanduser()
+    vault = Path(vault_value).expanduser()
     if not vault.is_absolute():
         raise ConfigError("vault must be an absolute path")
     vault = vault.resolve()
@@ -200,6 +208,18 @@ class WikiService:
         self._schema_ready = False
 
     # --- lifecycle ------------------------------------------------------------
+
+    def reconfigure(self, **changes: Any) -> dict[str, Any]:
+        """Replace host settings (e.g. a new vault) and rebuild core settings."""
+        self.config = replace(self.config, **changes)
+        self._config_error = ""
+        try:
+            self._settings = build_settings(self.config)
+        except ConfigError as exc:
+            self._settings = None
+            self._config_error = str(exc)
+        self._schema_ready = False
+        return {"configured": self.configured, "error": self._config_error}
 
     @property
     def settings(self) -> Settings:
@@ -381,7 +401,7 @@ class WikiService:
             return {
                 "configured": False,
                 "error": self._config_error,
-                "remediation": "set the vault path (Hermes: plugins.entries.llmwiki.settings.vault)",
+                "remediation": "run `llmwiki init` on this machine, or: hermes config set plugins.entries.llmwiki.settings.vault /path/to/vault",
             }
         settings = self.settings
         report = dbmod.inspect_integrity(settings.db_path, vault_path=settings.vault_path)

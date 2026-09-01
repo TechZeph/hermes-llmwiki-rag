@@ -20,11 +20,15 @@ cd hermes-llmwiki-rag
 python -m venv .venv
 .venv/bin/python -m pip install -e ".[mcp]"        # add [dev] for tests
 
-export LLMWIKI_VAULT=~/Workspace/vaults/clanker-vault   # or pass --vault
-.venv/bin/llmwiki index          # first run embeds every chunk (minutes; see below)
-.venv/bin/llmwiki status
+.venv/bin/llmwiki init           # finds vaults, or creates a starter vault; saves config; first index
+.venv/bin/llmwiki doctor         # environment, config, projection and Hermes checks with next steps
 .venv/bin/llmwiki search --query "why did we choose sqlite-vec?"
 ```
+
+`llmwiki init` writes `~/.config/llmwiki/config.toml` (`llmwiki config show`
+/ `llmwiki config set KEY VALUE`), so `--vault` and `LLMWIKI_VAULT` are only
+needed to override it. Non-interactive use: `llmwiki init /path/to/vault --yes`
+or `llmwiki init --create ~/llmwiki-vault --yes`.
 
 The projection is created at `$XDG_DATA_HOME/llmwiki/llmwiki.sqlite`
 (default `~/.local/share/llmwiki/llmwiki.sqlite`) with `0700`/`0600`
@@ -88,10 +92,14 @@ cold start on purpose.
 ~/.hermes/hermes-agent/venv/bin/pip install -e /path/to/hermes-llmwiki-rag
 ln -s /path/to/hermes-llmwiki-rag/hermes_plugin ~/.hermes/plugins/llmwiki
 hermes plugins enable llmwiki --no-allow-tool-override
-hermes config set plugins.entries.llmwiki.settings.vault /path/to/vault
 hermes plugins doctor /path/to/hermes-llmwiki-rag/hermes_plugin --ci
 hermes gateway restart          # running sessions load plugins at start
 ```
+
+The plugin falls back to the vault saved by `llmwiki init`. To pin one
+explicitly: `hermes config set plugins.entries.llmwiki.settings.vault /path/to/vault`,
+or in a session `/llmwiki setup /path/to/vault`. `/llmwiki status|reindex|doctor`
+are available too.
 
 Or from GitHub once published: `hermes plugins install TechZeph/hermes-llmwiki-rag/hermes_plugin`.
 

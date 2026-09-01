@@ -73,3 +73,10 @@ calibrated gate, and returns `{"context": ...}` (≤ `auto_inject_budget_tokens`
 same envelope as search) or `None`. Timeouts, errors, no-answer routes
 and gate refusals all return `None`. Decisions are kept in memory (last
 50, no query text) and visible in `llmwiki_status`.
+
+## `/llmwiki` slash command (Hermes only)
+
+`/llmwiki status` (one-line health), `/llmwiki setup /abs/path/to/vault`
+(validates, reconfigures the running plugin, persists
+`plugins.entries.llmwiki.settings.vault`), `/llmwiki reindex` (incremental,
+waits up to 120 s), `/llmwiki doctor` (same checks as `llmwiki doctor`).

@@ -41,5 +41,5 @@ def test_index_settings_require_a_vault_flag_or_environment_value(
     monkeypatch.delenv("LLMWIKI_VAULT", raising=False)
     monkeypatch.chdir(tmp_path)
 
-    with pytest.raises(click.UsageError, match="--vault or LLMWIKI_VAULT"):
+    with pytest.raises(click.UsageError, match="pass --vault"):
         _resolve_settings(vault=None, db=None, watch=False, require_vault=True)

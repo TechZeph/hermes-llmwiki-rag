@@ -42,8 +42,11 @@ def _coerce_bool(value: Any, default: bool) -> bool:
 
 
 class Handlers:
-    def __init__(self, runtime: PluginRuntime) -> None:
+    def __init__(
+        self, runtime: PluginRuntime, *, set_config: Callable[[str, Any], None] | None = None
+    ) -> None:
         self.runtime = runtime
+        self._set_config = set_config
 
     def search(self, args: dict[str, Any], **_: Any) -> str:
         query = str(args.get("query") or "").strip()
@@ -102,6 +105,61 @@ class Handlers:
             return _error("related-failed", type(exc).__name__)
         return _dump(payload)
 
+    def slash(self, raw_args: str = "", **_: Any) -> str:
+        """``/llmwiki [status|setup <vault>|reindex|doctor]`` for CLI and gateway sessions."""
+        parts = (raw_args or "").strip().split(maxsplit=1)
+        verb = parts[0].lower() if parts else "status"
+        arg = parts[1].strip() if len(parts) > 1 else ""
+        if verb == "setup":
+            if not arg:
+                return "usage: /llmwiki setup /absolute/path/to/vault"
+            from pathlib import Path
+
+            vault = Path(arg).expanduser()
+            if not vault.is_absolute() or not vault.is_dir():
+                return f"not an existing absolute directory: {arg}"
+            outcome = self.runtime.reconfigure(vault=str(vault.resolve()))
+            if not outcome["configured"]:
+                return f"could not use that vault: {outcome['error']}"
+            persisted = ""
+            if self._set_config is not None:
+                try:
+                    self._set_config("vault", str(vault.resolve()))
+                    persisted = " and saved to plugins.entries.llmwiki.settings.vault"
+                except Exception as exc:
+                    persisted = f" (not saved to Hermes config: {type(exc).__name__})"
+            status = self.runtime.status()
+            hint = (
+                ""
+                if status.get("integrity", {}).get("exists")
+                else " No projection yet: run `llmwiki index` or `/llmwiki reindex`."
+            )
+            return f"vault set to {vault.resolve().name}{persisted}.{hint}"
+        if verb == "reindex":
+            try:
+                payload = self.runtime.reindex(mode="incremental", confirm=False, wait_seconds=120)
+            except ConfigError as exc:
+                return f"cannot reindex: {exc}"
+            job = payload.get("job", {})
+            return f"reindex {payload.get('state')}: {job.get('result') or job.get('error') or ''}"
+        if verb == "doctor":
+            from llmwiki.doctor import format_checks, run_doctor
+
+            return format_checks(run_doctor())
+        status = self.runtime.status()
+        if not status.get("configured"):
+            return f"llmwiki: not configured ({status.get('error')}). Try /llmwiki setup <vault>."
+        counts = status.get("counts", {})
+        integrity = status.get("integrity", {})
+        watcher = status.get("watcher", {})
+        return (
+            f"llmwiki: vault {status.get('vault')}, {counts.get('documents', 0)} documents, "
+            f"{counts.get('chunks', 0)} chunks, integrity {'ok' if integrity.get('ok') else 'PROBLEM'}, "
+            f"{'stale' if status.get('stale') else 'fresh'}, watcher {watcher.get('state')}, "
+            f"auto-inject {'on' if status.get('auto_inject') else 'off'} "
+            f"({status.get('auto_inject_gate')})."
+        )
+
     def on_session_start(self, **kwargs: Any) -> None:
         """Lazy watcher start on the first session; never returns content."""
         self.runtime.ensure_watcher()
@@ -115,8 +173,10 @@ class Handlers:
         return self.runtime.auto_inject(user_message)
 
 
-def make_handlers(runtime: PluginRuntime) -> Handlers:
-    return Handlers(runtime)
+def make_handlers(
+    runtime: PluginRuntime, *, set_config: Callable[[str, Any], None] | None = None
+) -> Handlers:
+    return Handlers(runtime, set_config=set_config)
 
 
 HandlerFn = Callable[..., str]
