@@ -14,6 +14,7 @@ import sqlite3
 import time
 from collections.abc import Iterable
 
+from . import db as dbmod
 from .models import Chunk
 
 __all__ = [
@@ -43,7 +44,7 @@ def insert_chunks(conn: sqlite3.Connection, document_id: int, chunks: Iterable[C
     """
     chunks_list = list(chunks)
     now_ns = time.time_ns()
-    with conn:
+    with dbmod.transaction(conn):
         delete_chunks_for_document(conn, document_id)
         if not chunks_list:
             return []

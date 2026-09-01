@@ -303,6 +303,77 @@ def test_indexer_reembeds_on_model_change(tmp_path: Path) -> None:
     assert s2.embeddings_built == 0
 
 
+class FailingEmbedder(FakeEmbedder):
+    """Fails only for the update fixture after its old projection exists."""
+
+    def embed(self, texts: Sequence[str]) -> list[list[float]]:
+        if any("FAIL_EMBED" in text for text in texts):
+            raise RuntimeError("injected embedding failure")
+        return super().embed(texts)
+
+
+def test_indexer_rolls_back_document_projection_when_embedding_fails(tmp_path: Path) -> None:
+    """A failed update leaves the prior document, chunks, and vectors intact."""
+    from llmwiki.config import Settings
+    from llmwiki.indexer import Indexer
+
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    note = vault / "note.md"
+    note.write_text("# Note\n\noriginal body\n")
+    db_path = tmp_path / "test.sqlite"
+    settings = Settings(vault_path=vault, db_path=db_path)
+
+    Indexer(settings, embedder=FailingEmbedder(dim=384)).run(mode="incremental")
+    with dbmod.connect(db_path) as conn:
+        before = conn.execute(
+            "SELECT content_hash FROM documents WHERE path = 'note.md'"
+        ).fetchone()[0]
+        before_chunk_ids = [row[0] for row in conn.execute("SELECT id FROM chunks").fetchall()]
+        before_vector_ids = [
+            row[0] for row in conn.execute("SELECT chunk_id FROM chunk_embeddings").fetchall()
+        ]
+
+    note.write_text("# Note\n\nFAIL_EMBED changed body\n")
+    stats = Indexer(settings, embedder=FailingEmbedder(dim=384)).run(mode="incremental")
+
+    assert len(stats.errors) == 1
+    with dbmod.connect(db_path) as conn:
+        after = conn.execute(
+            "SELECT content_hash FROM documents WHERE path = 'note.md'"
+        ).fetchone()[0]
+        after_chunk_ids = [row[0] for row in conn.execute("SELECT id FROM chunks").fetchall()]
+        after_vector_ids = [
+            row[0] for row in conn.execute("SELECT chunk_id FROM chunk_embeddings").fetchall()
+        ]
+    assert after == before
+    assert after_chunk_ids == before_chunk_ids
+    assert after_vector_ids == before_vector_ids
+
+
+def test_indexer_deleting_document_removes_its_vectors(tmp_path: Path) -> None:
+    """A deleted source removes every derived row, including vec0 rows."""
+    from llmwiki.config import Settings
+    from llmwiki.indexer import Indexer
+
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    note = vault / "note.md"
+    note.write_text("# Note\n\nbody text\n")
+    db_path = tmp_path / "test.sqlite"
+    settings = Settings(vault_path=vault, db_path=db_path)
+
+    Indexer(settings, embedder=FakeEmbedder(dim=384)).run(mode="incremental")
+    note.unlink()
+
+    stats = Indexer(settings, embedder=FakeEmbedder(dim=384)).run(mode="incremental")
+    assert stats.documents_removed == 1
+    with dbmod.connect(db_path) as conn:
+        assert conn.execute("SELECT COUNT(*) FROM documents").fetchone()[0] == 0
+        assert conn.execute("SELECT COUNT(*) FROM chunks").fetchone()[0] == 0
+        assert conn.execute("SELECT COUNT(*) FROM chunk_embeddings").fetchone()[0] == 0
+
+
 def test_indexer_updates_embeddings_when_chunks_change(tmp_path: Path) -> None:
     """A document edit drops the old vectors and writes new ones."""
     from llmwiki.config import Settings

@@ -155,3 +155,32 @@ def test_cli_status_json(tmp_path: Path) -> None:
     assert payload["documents"] == 2
     assert payload["exists"] is True
     assert payload["last_run"]["added"] == 2
+
+
+def test_cli_integrity_reports_clean_no_embed_projection(tmp_path: Path) -> None:
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    _make_vault(vault)
+    db = tmp_path / "llmwiki.sqlite"
+    Indexer(Settings(vault_path=vault, db_path=db)).run()
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "llmwiki.cli",
+            "integrity",
+            "--vault",
+            str(vault),
+            "--db",
+            str(db),
+            "--json",
+        ],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    payload = json.loads(result.stdout)
+    assert payload["ok"] is True
+    assert payload["orphan_vectors"] == 0
+    assert payload["chunks_without_embeddings"] >= 1

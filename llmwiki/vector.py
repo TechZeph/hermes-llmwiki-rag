@@ -27,6 +27,8 @@ import sqlite3
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
 
+from . import db as dbmod
+
 
 class VectorStore(ABC):
     """Abstract vector store.
@@ -123,13 +125,12 @@ class SqliteVecStore(VectorStore):
             )
             for chunk_id, vec in zip(ids, vectors, strict=True)
         ]
-        with self._conn:
+        with dbmod.transaction(self._conn):
             # sqlite-vec virtual tables don't support the SQLite
-            # ``ON CONFLICT ... DO UPDATE`` upsert syntax. We emulate
-            # it with a DELETE for the same ids followed by INSERT.
-            # Both run inside the same implicit transaction (the
-            # ``with self._conn:`` block) so a crash mid-upsert can't
-            # leave the store half-written.
+            # ``ON CONFLICT ... DO UPDATE`` upsert syntax. We emulate it
+            # with DELETE followed by INSERT. ``db.transaction`` keeps
+            # this atomic standalone and joins the document projection
+            # transaction through a savepoint when called by the indexer.
             self._conn.executemany(
                 f"DELETE FROM {self._table} WHERE chunk_id = ?",
                 [(row[0],) for row in rows],
@@ -146,11 +147,10 @@ class SqliteVecStore(VectorStore):
     def delete(self, ids: Sequence[int]) -> None:
         if not ids:
             return
-        with self._conn:
-            self._conn.executemany(
-                f"DELETE FROM {self._table} WHERE chunk_id = ?",
-                [(int(i),) for i in ids],
-            )
+        self._conn.executemany(
+            f"DELETE FROM {self._table} WHERE chunk_id = ?",
+            [(int(i),) for i in ids],
+        )
 
     def count(self) -> int:
         row = self._conn.execute(f"SELECT COUNT(*) FROM {self._table}").fetchone()

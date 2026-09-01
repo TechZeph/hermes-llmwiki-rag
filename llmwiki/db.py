@@ -9,16 +9,15 @@ The database is the single source of truth for:
 - Graph edges (Phase 10).
 - Retrieval runs and eval results (Phase 13).
 
-The schema is defined in code (not as a migration tool) for the
-first 4-5 phases. When the schema starts changing, we'll introduce
-``migrations/`` and a tiny migrator. For now, ``init_schema`` is
-idempotent: it creates the tables if they don't exist.
+The schema is defined in code as an ordered migration registry. ``init_schema``
+upgrades an empty v0 database and every released v1, v2, or v3 database through
+v4, committing each transition atomically.
 """
 
 from __future__ import annotations
 
 import sqlite3
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Final
@@ -27,122 +26,253 @@ from .logging import get_logger
 
 logger = get_logger("db")
 
-_SCHEMA_VERSION: Final = 3
+_SCHEMA_VERSION: Final = 4
 
 # sqlite-vec needs the embedding dimension as a schema literal. The
 # plan locks BGE-small-en-v1.5 (384-dim). If we ever swap models we
 # drop and recreate the vec0 table via a future migration.
 _EMBEDDING_DIM: Final = 384
 
-_SCHEMA_SQL: Final = f"""
-CREATE TABLE IF NOT EXISTS schema_meta (
-    key   TEXT PRIMARY KEY,
-    value TEXT NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS documents (
-    id              INTEGER PRIMARY KEY AUTOINCREMENT,
-    path            TEXT    NOT NULL UNIQUE,         -- relative to vault root, forward-slashes
-    absolute_path   TEXT    NOT NULL,                -- for debugging / external tools
-    title           TEXT    NOT NULL,                -- from H1 or frontmatter
-    mtime_ns        INTEGER NOT NULL,                -- POSIX nanoseconds
-    size_bytes      INTEGER NOT NULL,
-    content_hash    TEXT    NOT NULL,                -- sha256 of the raw bytes
-    frontmatter_json TEXT,                           -- JSON; NULL if absent
-    tags_json       TEXT    NOT NULL DEFAULT '[]',   -- JSON list of strings
-    wikilinks_json  TEXT    NOT NULL DEFAULT '[]',   -- JSON list of strings (raw targets)
-    aliases_json    TEXT    NOT NULL DEFAULT '[]',   -- JSON list of strings
-    headings_json   TEXT    NOT NULL DEFAULT '[]',   -- JSON list of {{level, text}} dicts
-    indexed_at_ns   INTEGER NOT NULL                 -- POSIX nanoseconds of the last successful index
-);
-
-CREATE INDEX IF NOT EXISTS idx_documents_mtime ON documents(mtime_ns);
-CREATE INDEX IF NOT EXISTS idx_documents_hash  ON documents(content_hash);
-
--- Phase 2: structural chunks. One row per (document, position) pair.
--- ``heading_path_json`` is a JSON list of strings (the breadcrumb);
--- ``section_name`` is the last element (the most specific heading).
-CREATE TABLE IF NOT EXISTS chunks (
-    id                INTEGER PRIMARY KEY AUTOINCREMENT,
-    document_id       INTEGER NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
-    position          INTEGER NOT NULL,             -- ordinal within the document
-    heading_path_json TEXT    NOT NULL DEFAULT '[]',
-    section_name      TEXT    NOT NULL DEFAULT '',
-    text              TEXT    NOT NULL,
-    text_hash         TEXT    NOT NULL,              -- sha256 of the chunk text (for fast equality)
-    char_count        INTEGER NOT NULL,
-    indexed_at_ns     INTEGER NOT NULL,
-    UNIQUE (document_id, position)
-);
-
-CREATE INDEX IF NOT EXISTS idx_chunks_document ON chunks(document_id);
-CREATE INDEX IF NOT EXISTS idx_chunks_hash     ON chunks(text_hash);
-
--- Phase 3: embeddings. The vec0 virtual table holds the vectors
--- and an auxiliary ``embedding_model`` column tracks which model
--- produced each row. On model change, the indexer re-embeds.
--- The dimension ({_EMBEDDING_DIM}) is fixed at schema time; if we
--- ever change it, drop and recreate this table.
-CREATE VIRTUAL TABLE IF NOT EXISTS chunk_embeddings USING vec0(
-    chunk_id         INTEGER PRIMARY KEY,
-    embedding float[{_EMBEDDING_DIM}],
-    embedding_model  TEXT
-);
-
--- Phase 4 will add: chunks_fts (FTS5 virtual table)
--- Phase 10 will add: graph_edges
--- Phase 13 will add: retrieval_runs, eval_results
-
-CREATE TABLE IF NOT EXISTS index_runs (
-    id              INTEGER PRIMARY KEY AUTOINCREMENT,
-    started_at_ns   INTEGER NOT NULL,
-    finished_at_ns  INTEGER,
-    mode            TEXT    NOT NULL,                 -- "full" | "incremental"
-    documents_seen  INTEGER NOT NULL DEFAULT 0,
-    documents_added INTEGER NOT NULL DEFAULT 0,
-    documents_updated INTEGER NOT NULL DEFAULT 0,
-    documents_removed INTEGER NOT NULL DEFAULT 0,
-    documents_skipped INTEGER NOT NULL DEFAULT 0,
-    errors_json     TEXT    NOT NULL DEFAULT '[]'
-);
-"""
-
-
 # Model name + dim are exported for the embedder / indexer.
 EMBEDDING_DIM: Final = _EMBEDDING_DIM
 
 
 def init_schema(conn: sqlite3.Connection) -> None:
-    """Create tables and indexes if they do not yet exist.
+    """Upgrade a database through each ordered, transactional migration."""
+    previous_version = _schema_version(conn)
+    if previous_version > _SCHEMA_VERSION:
+        raise RuntimeError(
+            f"database schema version {previous_version} is newer than supported "
+            f"version {_SCHEMA_VERSION}"
+        )
 
-    Also records the current schema version. Safe to call repeatedly.
+    for version in range(previous_version, _SCHEMA_VERSION):
+        # Do not use executescript here: it commits any open transaction before
+        # running its SQL. Each migration's DDL and version marker must commit
+        # or roll back together.
+        with transaction(conn):
+            _MIGRATIONS[version](conn)
+            _set_schema_version(conn, version + 1)
 
-    Schema migrations:
-
-    - v1 → v2: introduced the ``chunks`` table. Existing v1 databases
-      had document rows but no chunks. ``_backfill_v2_chunks`` is
-      called once to populate chunks for every existing document.
-      The backfill is also a no-op safety net on every run: if any
-      document is missing chunks, they are filled in. This catches
-      a backfill that crashed mid-run, and any future schema
-      migration that adds a new derived table.
-    """
-    conn.executescript(_SCHEMA_SQL)
-    previous_version_row = conn.execute(
-        "SELECT value FROM schema_meta WHERE key = 'schema_version'"
-    ).fetchone()
-    previous_version = int(previous_version_row[0]) if previous_version_row else 0
-    conn.execute(
-        "INSERT OR REPLACE INTO schema_meta(key, value) VALUES (?, ?)",
-        ("schema_version", str(_SCHEMA_VERSION)),
-    )
     if previous_version < 2:
         _backfill_v2_chunks(conn)
-    # Always run the orphan-chunks backfill: cheap (single query),
-    # and it makes the system self-healing for any document that
-    # lost its chunks (e.g. due to a crash mid-write).
     _backfill_orphan_chunks(conn)
-    conn.commit()
+
+
+def _schema_version(conn: sqlite3.Connection) -> int:
+    """Return zero for an empty database and the stored version otherwise."""
+    has_meta = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'schema_meta'"
+    ).fetchone()
+    if has_meta is None:
+        return 0
+    row = conn.execute("SELECT value FROM schema_meta WHERE key = 'schema_version'").fetchone()
+    if row is None:
+        raise RuntimeError("database has schema_meta but no schema_version")
+    return int(row[0])
+
+
+def _set_schema_version(conn: sqlite3.Connection, version: int) -> None:
+    conn.execute(
+        "INSERT OR REPLACE INTO schema_meta(key, value) VALUES ('schema_version', ?)",
+        (str(version),),
+    )
+
+
+def _migrate_v0_to_v1(conn: sqlite3.Connection) -> None:
+    """Create the original document and index-run projection tables."""
+    for statement in (
+        "CREATE TABLE schema_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)",
+        """CREATE TABLE documents (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, path TEXT NOT NULL UNIQUE,
+            absolute_path TEXT NOT NULL, title TEXT NOT NULL, mtime_ns INTEGER NOT NULL,
+            size_bytes INTEGER NOT NULL, content_hash TEXT NOT NULL, frontmatter_json TEXT,
+            tags_json TEXT NOT NULL DEFAULT '[]', wikilinks_json TEXT NOT NULL DEFAULT '[]',
+            aliases_json TEXT NOT NULL DEFAULT '[]', headings_json TEXT NOT NULL DEFAULT '[]',
+            indexed_at_ns INTEGER NOT NULL
+        )""",
+        "CREATE INDEX idx_documents_mtime ON documents(mtime_ns)",
+        "CREATE INDEX idx_documents_hash ON documents(content_hash)",
+        """CREATE TABLE index_runs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, started_at_ns INTEGER NOT NULL,
+            finished_at_ns INTEGER, mode TEXT NOT NULL, documents_seen INTEGER NOT NULL DEFAULT 0,
+            documents_added INTEGER NOT NULL DEFAULT 0, documents_updated INTEGER NOT NULL DEFAULT 0,
+            documents_removed INTEGER NOT NULL DEFAULT 0, documents_skipped INTEGER NOT NULL DEFAULT 0,
+            errors_json TEXT NOT NULL DEFAULT '[]'
+        )""",
+    ):
+        conn.execute(statement)
+
+
+def _migrate_v1_to_v2(conn: sqlite3.Connection) -> None:
+    """Add structural chunks to the v1 projection."""
+    for statement in (
+        """CREATE TABLE chunks (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            document_id INTEGER NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+            position INTEGER NOT NULL, heading_path_json TEXT NOT NULL DEFAULT '[]',
+            section_name TEXT NOT NULL DEFAULT '', text TEXT NOT NULL, text_hash TEXT NOT NULL,
+            char_count INTEGER NOT NULL, indexed_at_ns INTEGER NOT NULL,
+            UNIQUE (document_id, position)
+        )""",
+        "CREATE INDEX idx_chunks_document ON chunks(document_id)",
+        "CREATE INDEX idx_chunks_hash ON chunks(text_hash)",
+    ):
+        conn.execute(statement)
+
+
+def _migrate_v2_to_v3(conn: sqlite3.Connection) -> None:
+    """Add sqlite-vec embeddings; ``connect`` loads sqlite-vec before this runs."""
+    conn.execute(
+        f"""CREATE VIRTUAL TABLE chunk_embeddings USING vec0(
+            chunk_id INTEGER PRIMARY KEY,
+            embedding float[{_EMBEDDING_DIM}],
+            embedding_model TEXT
+        )"""
+    )
+
+
+def _migrate_v3_to_v4(conn: sqlite3.Connection) -> None:
+    """Add durable projection metadata without rewriting indexed content."""
+    conn.execute(
+        """CREATE TABLE IF NOT EXISTS projection_meta (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL
+        )"""
+    )
+
+
+Migration = Callable[[sqlite3.Connection], None]
+_MIGRATIONS: dict[int, Migration] = {
+    0: _migrate_v0_to_v1,
+    1: _migrate_v1_to_v2,
+    2: _migrate_v2_to_v3,
+    3: _migrate_v3_to_v4,
+}
+
+
+def clear_projection(conn: sqlite3.Connection) -> None:
+    """Clear projection rows and mark a full rebuild in progress.
+
+    Reindexing can take many minutes. It is not held in one database
+    transaction; the durable state marker prevents integrity/status surfaces
+    from presenting an interrupted or partially rebuilt projection as healthy.
+    """
+    with transaction(conn):
+        conn.execute("DELETE FROM chunk_embeddings")
+        conn.execute("DELETE FROM documents")
+        conn.execute("DELETE FROM index_runs")
+        conn.execute("DELETE FROM projection_meta")
+        conn.execute(
+            "INSERT INTO projection_meta(key, value) VALUES ('rebuild_state', 'in_progress')"
+        )
+
+
+def set_rebuild_state(conn: sqlite3.Connection, state: str) -> None:
+    """Record the terminal state of a full projection rebuild."""
+    if state not in {"ready", "failed"}:
+        raise ValueError(f"unsupported rebuild state: {state!r}")
+    with transaction(conn):
+        conn.execute(
+            "INSERT OR REPLACE INTO projection_meta(key, value) VALUES ('rebuild_state', ?)",
+            (state,),
+        )
+
+
+def inspect_integrity(db_path: Path, *, vault_path: Path | None = None) -> dict[str, object]:
+    """Report structural defects in the rebuildable retrieval projection.
+
+    Missing embeddings are reported but not fatal because an explicit
+    ``--no-embed`` index is supported. Orphan rows, vanished source documents,
+    and mixed embedding models make the projection unsuitable for retrieval.
+    """
+    if not db_path.exists():
+        return {"exists": False, "ok": False, "path": str(db_path)}
+    with connect(db_path) as conn:
+        try:
+            schema_row = conn.execute(
+                "SELECT value FROM schema_meta WHERE key = 'schema_version'"
+            ).fetchone()
+            schema_version = int(schema_row[0]) if schema_row is not None else None
+        except sqlite3.OperationalError as exc:
+            return {
+                "exists": True,
+                "ok": False,
+                "path": str(db_path),
+                "error": f"uninitialised or unsupported database: {exc}",
+            }
+        rebuild_state = "legacy"
+        projection_meta_exists = conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'projection_meta'"
+        ).fetchone()
+        if projection_meta_exists is not None:
+            state_row = conn.execute(
+                "SELECT value FROM projection_meta WHERE key = 'rebuild_state'"
+            ).fetchone()
+            if state_row is not None:
+                rebuild_state = str(state_row[0])
+        orphan_vectors = int(
+            conn.execute(
+                """
+                SELECT COUNT(*) FROM chunk_embeddings e
+                LEFT JOIN chunks c ON c.id = e.chunk_id
+                WHERE c.id IS NULL
+                """
+            ).fetchone()[0]
+        )
+        orphan_chunks = int(
+            conn.execute(
+                """
+                SELECT COUNT(*) FROM chunks c
+                LEFT JOIN documents d ON d.id = c.document_id
+                WHERE d.id IS NULL
+                """
+            ).fetchone()[0]
+        )
+        chunks_without_embeddings = int(
+            conn.execute(
+                """
+                SELECT COUNT(*) FROM chunks c
+                LEFT JOIN chunk_embeddings e ON e.chunk_id = c.id
+                WHERE e.chunk_id IS NULL
+                """
+            ).fetchone()[0]
+        )
+        models = [
+            str(row[0])
+            for row in conn.execute(
+                "SELECT DISTINCT embedding_model FROM chunk_embeddings ORDER BY embedding_model"
+            ).fetchall()
+        ]
+        missing_on_disk: list[str] = []
+        if vault_path is not None:
+            for path, absolute_path in conn.execute(
+                "SELECT path, absolute_path FROM documents ORDER BY path"
+            ).fetchall():
+                if not Path(str(absolute_path)).is_file():
+                    missing_on_disk.append(str(path))
+
+    ok = (
+        schema_version == _SCHEMA_VERSION
+        and not orphan_vectors
+        and not orphan_chunks
+        and not missing_on_disk
+        and len(models) <= 1
+        and rebuild_state not in {"in_progress", "failed"}
+    )
+    return {
+        "exists": True,
+        "ok": ok,
+        "path": str(db_path),
+        "schema_version": schema_version,
+        "rebuild_state": rebuild_state,
+        "orphan_vectors": orphan_vectors,
+        "orphan_chunks": orphan_chunks,
+        "chunks_without_embeddings": chunks_without_embeddings,
+        "documents_missing_on_disk": missing_on_disk,
+        "embedding_models": models,
+        "mixed_embedding_models": len(models) > 1,
+    }
 
 
 def _backfill_v2_chunks(conn: sqlite3.Connection) -> None:
@@ -198,6 +328,31 @@ def _backfill_orphan_chunks(conn: sqlite3.Connection, *, log: bool = False) -> N
 
 
 @contextmanager
+def transaction(conn: sqlite3.Connection) -> Iterator[None]:
+    """Make a group of projection writes atomic, nesting via savepoints."""
+    if conn.in_transaction:
+        conn.execute("SAVEPOINT llmwiki_projection")
+        try:
+            yield
+        except Exception:
+            conn.execute("ROLLBACK TO llmwiki_projection")
+            conn.execute("RELEASE llmwiki_projection")
+            raise
+        else:
+            conn.execute("RELEASE llmwiki_projection")
+        return
+
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        yield
+    except Exception:
+        conn.rollback()
+        raise
+    else:
+        conn.commit()
+
+
+@contextmanager
 def connect(db_path: Path) -> Iterator[sqlite3.Connection]:
     """Open a SQLite connection with the project's standard pragmas.
 
@@ -233,4 +388,11 @@ def connect(db_path: Path) -> Iterator[sqlite3.Connection]:
         conn.close()
 
 
-__all__ = ["connect", "init_schema"]
+__all__ = [
+    "clear_projection",
+    "connect",
+    "init_schema",
+    "inspect_integrity",
+    "set_rebuild_state",
+    "transaction",
+]

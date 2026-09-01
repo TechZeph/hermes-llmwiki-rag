@@ -201,16 +201,26 @@ def _upsert_document(conn: sqlite3.Connection, doc: Document) -> int:
 
 
 def _delete_missing(conn: sqlite3.Connection, seen_paths: set[str]) -> int:
-    """Remove documents whose paths were not seen on this run. Returns count.
+    """Remove absent documents and every derived projection they own.
 
-    Chunk rows cascade-delete via the FK on ``chunks.document_id``,
-    so we don't have to clean them up here.
+    sqlite-vec virtual tables cannot declare a foreign key to ``chunks``. The
+    vector rows therefore require explicit deletion before the chunk/document
+    cascade in the same transaction.
     """
     rows = conn.execute("SELECT id, path FROM documents").fetchall()
+    store = SqliteVecStore(conn)
     removed = 0
     for row_id, path in rows:
         if path not in seen_paths:
-            conn.execute("DELETE FROM documents WHERE id = ?", (row_id,))
+            with dbmod.transaction(conn):
+                chunk_ids = [
+                    int(row[0])
+                    for row in conn.execute(
+                        "SELECT id FROM chunks WHERE document_id = ?", (row_id,)
+                    ).fetchall()
+                ]
+                store.delete(chunk_ids)
+                conn.execute("DELETE FROM documents WHERE id = ?", (row_id,))
             removed += 1
     return removed
 
@@ -259,8 +269,7 @@ class Indexer:
         if mode not in ("incremental", "full"):
             raise ValueError(f"mode must be 'incremental' or 'full', got {mode!r}")
         if mode == "full":
-            # Future: drop tables and recreate. For Phase 1, full == incremental.
-            logger.info("full mode requested; running incremental pass (no drop yet)")
+            logger.info("full mode requested; rebuilding the derived projection")
 
         vault = self.settings.vault_path
         if not vault.is_dir():
@@ -276,6 +285,8 @@ class Indexer:
 
         with dbmod.connect(self.settings.db_path) as conn:
             dbmod.init_schema(conn)
+            if mode == "full":
+                dbmod.clear_projection(conn)
             # Phase 3: open the vector store if an embedder is
             # provided. The store is local to this run because its
             # connection lifetime matches the run; caching it on
@@ -335,50 +346,46 @@ class Indexer:
                         "SELECT id, content_hash, mtime_ns FROM documents WHERE path = ?",
                         (doc.path,),
                     ).fetchone()
-                    doc_id = _upsert_document(conn, doc)
+                    if prev is not None and prev[1] == doc.content_hash and prev[2] == doc.mtime_ns:
+                        _upsert_document(conn, doc)
+                        skipped += 1
+                        continue
+
+                    # A document and every materialised projection must change
+                    # together. In particular, vec0 has no FK to chunks, so a
+                    # failed embedding must not strand a changed document with
+                    # no chunks/vectors or leave deletion half-applied.
+                    with dbmod.transaction(conn):
+                        doc_id = _upsert_document(conn, doc)
+                        old_ids: list[int] = []
+                        if prev is not None:
+                            old_ids = delete_chunks_for_document(conn, doc_id)
+                            if vector_store is not None:
+                                vector_store.delete(old_ids)
+                        ids = _chunk_and_persist(conn, doc_id, parsed)
+                        n = 0
+                        if vector_store is not None:
+                            assert self.embedder is not None  # invariant: pair
+                            n = _embed_chunks(
+                                conn,
+                                doc_id,
+                                ids,
+                                embedder=self.embedder,
+                                store=vector_store,
+                                model=self.settings.embedding_model,
+                            )
 
                     if prev is None:
                         added += 1
-                        ids = _chunk_and_persist(conn, doc_id, parsed)
                         chunks_added += len(ids)
-                        if vector_store is not None:
-                            assert self.embedder is not None  # invariant: pair
-                            n = _embed_chunks(
-                                conn,
-                                doc_id,
-                                ids,
-                                embedder=self.embedder,
-                                store=vector_store,
-                                model=self.settings.embedding_model,
-                            )
-                            if reembed_all:
-                                embeddings_rebuilt += n
-                            else:
-                                embeddings_built += n
-                    elif prev[1] == doc.content_hash and prev[2] == doc.mtime_ns:
-                        skipped += 1
                     else:
                         updated += 1
-                        old_ids = delete_chunks_for_document(conn, doc_id)
-                        ids = _chunk_and_persist(conn, doc_id, parsed)
                         chunks_removed += len(old_ids)
                         chunks_updated += len(ids)
-                        if vector_store is not None:
-                            assert self.embedder is not None  # invariant: pair
-                            if old_ids:
-                                vector_store.delete(old_ids)
-                            n = _embed_chunks(
-                                conn,
-                                doc_id,
-                                ids,
-                                embedder=self.embedder,
-                                store=vector_store,
-                                model=self.settings.embedding_model,
-                            )
-                            if reembed_all:
-                                embeddings_rebuilt += n
-                            else:
-                                embeddings_built += n
+                    if reembed_all:
+                        embeddings_rebuilt += n
+                    else:
+                        embeddings_built += n
                 except Exception as exc:
                     msg = f"{vf.rel_path}: {type(exc).__name__}: {exc}"
                     logger.warning("index error: %s", msg)
@@ -401,6 +408,8 @@ class Indexer:
                 embeddings_rebuilt,
                 errors,
             )
+            if mode == "full":
+                dbmod.set_rebuild_state(conn, "ready" if not errors else "failed")
 
         stats = IndexRunStats(
             mode=mode,

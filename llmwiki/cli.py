@@ -196,6 +196,39 @@ def status(db: Path | None, as_json: bool) -> None:
     "--vault", type=click.Path(exists=True, file_okay=False, path_type=Path), default=None
 )
 @click.option("--db", type=click.Path(dir_okay=False, path_type=Path), default=None)
+@click.option("--json", "as_json", is_flag=True, help="Output machine-readable JSON")
+def integrity(vault: Path | None, db: Path | None, as_json: bool) -> None:
+    """Check the retrieval projection for orphan, stale, or mixed rows."""
+    from . import db as dbmod
+
+    base = Settings.from_env()
+    db_path = (db or base.db_path).expanduser().resolve()
+    vault_path = (vault or base.vault_path).expanduser().resolve()
+    report = dbmod.inspect_integrity(db_path, vault_path=vault_path)
+    if as_json:
+        click.echo(json.dumps(report, indent=2, default=str))
+    elif not report["exists"]:
+        click.echo(f"database does not exist: {db_path}")
+    else:
+        click.echo(f"database: {report['path']}")
+        click.echo(f"schema version: {report['schema_version']}")
+        click.echo(f"rebuild state: {report['rebuild_state']}")
+        click.echo(f"orphan vectors: {report['orphan_vectors']}")
+        click.echo(f"orphan chunks: {report['orphan_chunks']}")
+        click.echo(f"chunks without embeddings: {report['chunks_without_embeddings']}")
+        missing_on_disk = report["documents_missing_on_disk"]
+        assert isinstance(missing_on_disk, list)
+        click.echo(f"documents missing on disk: {len(missing_on_disk)}")
+        click.echo(f"mixed embedding models: {report['mixed_embedding_models']}")
+    if not report["ok"]:
+        raise click.ClickException("projection integrity check failed")
+
+
+@main.command()
+@click.option(
+    "--vault", type=click.Path(exists=True, file_okay=False, path_type=Path), default=None
+)
+@click.option("--db", type=click.Path(dir_okay=False, path_type=Path), default=None)
 @click.option("--query", required=True, help="Search query")
 @click.option("--top-k", default=10, show_default=True, type=int)
 @click.option("--json", "as_json", is_flag=True, help="Output machine-readable JSON")

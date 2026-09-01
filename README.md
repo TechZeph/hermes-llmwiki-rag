@@ -1,20 +1,24 @@
 # hermes-llmwiki-rag
 
-Local-first hybrid retrieval-augmented generation over an Obsidian vault, packaged as a standalone plugin for [Nous Hermes Agent](https://nousresearch.com).
+Local-first retrieval over an Obsidian vault, designed as a standalone plugin for [Nous Hermes Agent](https://hermes-agent.nousresearch.com/docs/). The target is an authority-aware hybrid pipeline; the implementation at commit `44c6e56` is a vector-only semantic index.
 
 ## What it does
 
-- Treats an Obsidian vault as the canonical source of truth.
+- Treats Markdown as canonical and SQLite/FTS/vector data as a rebuildable projection.
 - Indexes Markdown notes incrementally (new / modified / deleted / unchanged).
-- Will combine dense vector search, FTS5/BM25 lexical search, reciprocal-rank fusion, cross-encoder reranking, and Obsidian graph traversal. (Phases 3+.)
-- Will inject high-confidence retrieval into Hermes through a `pre_llm_call` hook. (Phase 9.)
-- Runs locally. SQLite + FTS5 + sqlite-vec. Local embeddings via FastEmbed. Local reranker.
+- Currently provides heading-aware chunks, local FastEmbed embeddings, sqlite-vec storage, and vector-only CLI search.
+- Will add explicit corpus profiles and intent-specific authority policy before BM25/hybrid fusion.
+- Will add FTS5/BM25 and RRF; reranking ships only if held-out evaluation justifies its latency and memory.
+- Will expose explicit, cited Hermes tools for V1. Optional `pre_llm_call` injection is a calibrated, opt-in V1.1 feature.
+- Runs locally after one-time model provisioning. Retrieved Markdown is treated as untrusted reference data.
 
 ## Status
 
-**Phase 1 in progress** (project setup + Obsidian indexer). See `wiki/projects/hermes-llmwiki-rag/plan.md` for the full 16-phase plan.
+**Stage 0 stabilization after Phase 3 semantic retrieval.** Incremental indexing, structural chunking, local embeddings, sqlite-vec persistence, and vector-only CLI search are implemented and tested.
 
-The retrieval engine, the Hermes plugin, and the automatic context injection are not yet implemented. The package currently provides the project skeleton, configuration, logging, the indexer interface, and a working CLI that can index an Obsidian vault into a local SQLite database.
+Before FTS5, the project is defining corpus and authority policy, versioning embedding recipes, and establishing a real-vault held-out baseline. Ordered migrations, a true `index --mode full` rebuild, a read-only `integrity` command, transactional document projection updates, and source-deletion vector cleanup are implemented. BM25, integrated hybrid retrieval, reranking, authority-aware context/citations, Hermes tools, routing, and automatic injection are not implemented yet.
+
+See [`docs/architecture.md`](docs/architecture.md) for the current architecture, measurable release gates, Hermes hook constraints, privacy requirements, and scope boundaries.
 
 ## Quick start
 
@@ -28,13 +32,18 @@ uv venv --python 3.14 .venv
   --vault ~/Workspace/vaults/clanker-vault \
   --db   ./.data/llmwiki.sqlite
 
-# 3. inspect the database
+# 3. search the semantic index
+.venv/bin/llmwiki search \
+  --db ./.data/llmwiki.sqlite \
+  --query "how does retrieval authority work?"
+
+# 4. inspect the database
 .venv/bin/llmwiki status --db ./.data/llmwiki.sqlite
 ```
 
 ## Architecture
 
-The RAG core is independent of Hermes. The Hermes plugin is a thin adapter. Either can be replaced or extended without rewriting the other.
+The retrieval core is independent of Hermes. The Hermes plugin is a thin adapter. Markdown remains canonical; the database can be rebuilt. See [`docs/architecture.md`](docs/architecture.md) for corpus profiles, authority rules, integrity requirements, evaluation, and release boundaries.
 
 ```
 llmwiki/
@@ -52,8 +61,7 @@ llmwiki/
   graph.py        Phase 10: Obsidian wikilink graph
   retrieval.py    Phase 5+: end-to-end retrieval
   scoring.py      Phase 6+: score normalisation + combination
-  citations.py    Phase 7: source attribution
-  context.py      Phase 7: LLM-ready context blocks
+  citations.py    Phase 7: source attribution + placeholder context builder
   cli.py          click CLI
   db.py           SQLite schema + connection helpers
 
@@ -61,7 +69,7 @@ hermes_plugin/    Phase 8+: Hermes plugin adapter
 tests/
   unit/           isolated unit tests
   integration/    filesystem + SQLite tests
-  eval/           Phase 13+: golden-question evaluation harness
+  eval/           Stage 0+: real-vault golden-question evaluation harness
 ```
 
 ## Development
