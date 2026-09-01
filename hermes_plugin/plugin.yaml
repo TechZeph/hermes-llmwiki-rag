@@ -1,0 +1,74 @@
+name: llmwiki
+version: 0.1.0
+manifest_version: 2
+api_version: 1
+description: "Local-first, authority-aware retrieval over an Obsidian LLM wiki: hybrid BM25 + dense search with cited, budgeted context. Tools: llmwiki_search, llmwiki_status, llmwiki_reindex. Optional opt-in pre_llm_call injection (default off)."
+author: "Zeph (TechZeph)"
+kind: backend
+license: MIT
+homepage: https://github.com/TechZeph/hermes-llmwiki-rag
+tags: [rag, obsidian, wiki, retrieval, local-first]
+provides_tools:
+  - llmwiki_search
+  - llmwiki_status
+  - llmwiki_reindex
+provides_hooks:
+  - pre_llm_call
+python_dependencies:
+  - "hermes-llmwiki-rag>=0.1,<0.2"
+config_schema:
+  vault:
+    type: str
+    required: true
+    description: "Absolute path to the Obsidian vault root (read-only for the plugin)."
+  db:
+    type: str
+    description: "SQLite projection path. Default: $XDG_DATA_HOME/llmwiki/llmwiki.sqlite."
+  default_profile:
+    type: str
+    default: answer
+    description: "Corpus profile when a tool call omits one: answer, evidence, history, all, project:<id>."
+  retrieval_mode:
+    type: str
+    default: hybrid
+    description: "dense, lexical, or hybrid."
+  max_results:
+    type: int
+    default: 6
+    description: "Upper bound on excerpts returned by llmwiki_search."
+  context_budget_tokens:
+    type: int
+    default: 1500
+    description: "Estimated-token budget for the context block in tool responses."
+  rerank:
+    type: bool
+    default: false
+    description: "Enable the local cross-encoder reranker (slow; see docs/evaluation.md Gate R)."
+  allow_reindex:
+    type: bool
+    default: true
+    description: "Allow llmwiki_reindex to run incremental indexing."
+  allow_full_rebuild:
+    type: bool
+    default: false
+    description: "Allow llmwiki_reindex mode=full (long-running, replaces the projection)."
+  stale_after_hours:
+    type: int
+    default: 24
+    description: "llmwiki_status reports the projection as stale after this many hours without an index run."
+  auto_inject:
+    type: bool
+    default: false
+    description: "Opt in to automatic pre_llm_call context injection (requires a calibrated gate)."
+  auto_inject_profile:
+    type: str
+    default: answer
+    description: "Profile used by automatic injection when routing gives no better cue."
+  auto_inject_deadline_ms:
+    type: int
+    default: 1500
+    description: "Internal deadline for automatic retrieval; on timeout nothing is injected."
+  auto_inject_budget_tokens:
+    type: int
+    default: 800
+    description: "Estimated-token budget for automatically injected context."
