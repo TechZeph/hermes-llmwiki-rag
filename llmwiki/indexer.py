@@ -36,7 +36,11 @@ from .embeddings import Embedder, model_provenance
 from .logging import get_logger
 from .models import Document, IndexRunStats
 from .parser import ParsedDocument, parse_markdown
-from .recipes import embedding_recipe_state, format_document_embedding_input
+from .recipes import (
+    compatibility_state,
+    embedding_recipe_state,
+    format_document_embedding_input,
+)
 from .vector import SqliteVecStore, VectorStore
 
 logger = get_logger("indexer")
@@ -380,7 +384,7 @@ class Indexer:
                 )
                 if vector_store.count() > 0:
                     reembed_all = reembed_all or not dbmod.projection_metadata_matches(
-                        conn, recipe_state
+                        conn, compatibility_state(recipe_state)
                     )
                 if reembed_all:
                     logger.warning(

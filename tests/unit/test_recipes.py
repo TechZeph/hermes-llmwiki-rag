@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from llmwiki.embeddings import model_provenance
 from llmwiki.recipes import (
     CHUNKER_RECIPE_VERSION,
@@ -46,14 +48,19 @@ def test_document_recipe_omits_empty_optional_metadata() -> None:
     )
 
 
-def test_query_recipe_is_independently_versioned_and_currently_raw() -> None:
-    """The first query recipe remains a measurable raw-query baseline."""
+def test_query_recipe_is_independently_versioned() -> None:
+    """Query recipes are selectable; v1 stays a measurable raw baseline, v2 is the default."""
     assert CHUNKER_RECIPE_VERSION == "chunker-v1-heading-char-2000"
-    assert QUERY_EMBEDDING_RECIPE_VERSION == "query-v1-raw"
+    assert QUERY_EMBEDDING_RECIPE_VERSION == "query-v2-bge-instruction"
     assert (
-        format_query_embedding_input("  What is the current RAG state?  ")
+        format_query_embedding_input("  What is the current RAG state?  ", recipe="query-v1-raw")
         == "What is the current RAG state?"
     )
+    assert format_query_embedding_input("  q ").startswith(
+        "Represent this sentence for searching relevant passages: q"
+    )
+    with pytest.raises(ValueError):
+        format_query_embedding_input("q", recipe="query-v9")
 
 
 def test_embedding_recipe_state_records_versions_model_and_actual_dimension() -> None:
@@ -61,7 +68,7 @@ def test_embedding_recipe_state_records_versions_model_and_actual_dimension() ->
     assert embedding_recipe_state(model_name="BAAI/bge-small-en-v1.5", dimension=384) == {
         "recipe.chunker": "chunker-v1-heading-char-2000",
         "recipe.document_embedding": "document-v1-structural",
-        "recipe.query_embedding": "query-v1-raw",
+        "recipe.query_embedding": "query-v2-bge-instruction",
         "recipe.corpus_policy": "corpus-v1-path-profiles",
         "recipe.embedding_model": "BAAI/bge-small-en-v1.5",
         "recipe.embedding_dimension": "384",

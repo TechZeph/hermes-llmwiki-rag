@@ -240,6 +240,7 @@ def integrity(vault: Path | None, db: Path | None, as_json: bool) -> None:
     help="Retrieval channels (default: configured retrieval_mode)",
 )
 @click.option("--rerank/--no-rerank", default=None, help="Force the cross-encoder on or off")
+@click.option("--context", "as_context", is_flag=True, help="Print the budgeted LLM context block")
 @click.option("--json", "as_json", is_flag=True, help="Output machine-readable JSON")
 def search(
     db: Path | None,
@@ -248,11 +249,12 @@ def search(
     profile: str,
     mode: str | None,
     rerank: bool | None,
+    as_context: bool,
     as_json: bool,
 ) -> None:
     """Profile-aware retrieval over the indexed vault (dense, lexical, or hybrid)."""
     from . import db as dbmod
-    from .retrieval import Retriever
+    from .retrieval import Retriever, context_for
 
     base = Settings.from_env()
     db_path = (db or base.db_path).expanduser().resolve()
@@ -285,6 +287,13 @@ def search(
             top_k=top_k,
             rerank=bool(reranker) if rerank is None else rerank,
         )
+    if as_context:
+        block = context_for(result, base)
+        if as_json:
+            click.echo(json.dumps(block.to_dict(), indent=2, ensure_ascii=False))
+        else:
+            click.echo(block.text if not block.empty else "no results.")
+        return
     if as_json:
         payload = {
             "query": result.query,

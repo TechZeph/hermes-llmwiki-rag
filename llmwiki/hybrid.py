@@ -25,24 +25,30 @@ def reciprocal_rank_fusion(
     channels: Mapping[str, Sequence[int]],
     *,
     k: int = 60,
+    weights: Mapping[str, float] | None = None,
 ) -> list[FusedEntry]:
     """Fuse ordered id lists from named channels.
 
     ``channels`` maps a channel name (``"dense"``, ``"lexical"``) to its
-    ids in best-first order. Each appearance adds ``1 / (k + rank)`` with
-    ranks starting at 1. Ties are broken by the best single-channel rank,
-    then by id, so results are deterministic.
+    ids in best-first order. Each appearance adds ``w / (k + rank)`` with
+    ranks starting at 1 and ``w`` the channel weight (default 1.0). Ties
+    are broken by the best single-channel rank, then by id, so results
+    are deterministic.
     """
     if k < 0:
         raise ValueError("rrf k must be non-negative")
+    weights = weights or {}
     scores: dict[int, float] = {}
     ranks: dict[int, dict[str, int]] = {}
     for name, ordered in channels.items():
+        weight = float(weights.get(name, 1.0))
+        if weight < 0:
+            raise ValueError("rrf channel weights must be non-negative")
         for rank, doc_id in enumerate(ordered, start=1):
             key = int(doc_id)
             if key in ranks and name in ranks[key]:
                 continue  # a channel lists an id at most once
-            scores[key] = scores.get(key, 0.0) + 1.0 / (k + rank)
+            scores[key] = scores.get(key, 0.0) + weight / (k + rank)
             ranks.setdefault(key, {})[name] = rank
     fused = [FusedEntry(id=i, rrf_score=s, ranks=dict(ranks[i])) for i, s in scores.items()]
     fused.sort(key=lambda e: (-e.rrf_score, min(e.ranks.values()), e.id))

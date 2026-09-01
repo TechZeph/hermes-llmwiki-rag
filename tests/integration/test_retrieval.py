@@ -135,13 +135,28 @@ def test_reranker_reorders_head_and_records_scores(indexed) -> None:
     settings, embedder = indexed
     with dbmod.connect(settings.db_path) as conn:
         r = Retriever(conn, embedder=embedder, settings=settings, reranker=ReverseReranker())
-        plain = r.retrieve(
-            "sqlite-vec", mode="hybrid", profile="all", top_k=100, max_per_document=0, rerank=False
-        )
-        reranked = r.retrieve(
-            "sqlite-vec", mode="hybrid", profile="all", top_k=100, max_per_document=0, rerank=True
-        )
+        common = {"mode": "hybrid", "profile": "all", "top_k": 100, "max_per_document": 0}
+        plain = r.retrieve("sqlite-vec", rerank=False, apply_authority=False, **common)
+        reranked = r.retrieve("sqlite-vec", rerank=True, apply_authority=False, **common)
     assert len(plain.candidates) <= settings.rerank_candidates
     assert [c.chunk_id for c in reranked.candidates] == [c.chunk_id for c in plain.candidates][::-1]
     assert all(c.rerank_score is not None for c in reranked.candidates)
     assert all("rerank" in c.selection_reason for c in reranked.candidates)
+
+
+def test_context_block_from_real_retrieval(indexed) -> None:
+    from llmwiki.citations import ENVELOPE_CLOSE, ENVELOPE_OPEN
+    from llmwiki.retrieval import context_for
+
+    settings, embedder = indexed
+    with dbmod.connect(settings.db_path) as conn:
+        r = Retriever(conn, embedder=embedder, settings=settings)
+        result = r.retrieve("what is the current status of sqlite-vec?", mode="hybrid", top_k=6)
+        block = context_for(result, settings)
+    assert not block.empty
+    assert block.text.startswith(ENVELOPE_OPEN) and block.text.rstrip().endswith(ENVELOPE_CLOSE)
+    assert block.citations[0].path == "wiki/projects/rag/current-state.md"
+    assert block.citations[0].authority_class == "current-state"
+    assert block.total_tokens <= settings.context_budget_tokens
+    assert all(not c.path.startswith("/") for c in block.citations)
+    assert all(c.chunk_ids and c.content_hashes for c in block.citations)

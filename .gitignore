@@ -1,5 +1,6 @@
 # Build artifacts
 .venv/
+.venv311/
 __pycache__/
 *.py[cod]
 *.egg-info/

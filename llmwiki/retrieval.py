@@ -9,9 +9,9 @@ The pipeline follows the architecture contract:
    independently with their raw metrics preserved.
 3. Reciprocal-rank fusion orders the union (``hybrid`` mode) or a
    single channel is used as-is (``dense`` / ``lexical``).
-4. Authority policy and document diversification are applied as a
+4. Optional reranking re-scores the top fused candidates when enabled.
+5. Authority policy and document diversification are applied as a
    stable re-ordering; scores are never mixed across channels.
-5. Optional reranking re-scores the top fused candidates when enabled.
 
 Nothing here imports Hermes; the plugin is a thin adapter over
 :class:`Retriever`.
@@ -26,6 +26,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import replace
 
 from .authority import apply_authority_policy, detect_intent
+from .citations import ContextBlock, build_context
 from .config import Settings
 from .corpus import profile_matches, profile_predicate
 from .embeddings import Embedder
@@ -151,7 +152,9 @@ class Retriever:
         total = self._vectors.count()
         if total == 0:
             return []
-        q_vec = self._embedder.embed([format_query_embedding_input(query)])[0]
+        q_vec = self._embedder.embed(
+            [format_query_embedding_input(query, recipe=self._settings.query_recipe)]
+        )[0]
         # The vec0 table cannot filter on document metadata inside the KNN
         # query, so over-fetch and filter. Widen progressively rather than
         # always scanning the whole store.
@@ -185,6 +188,7 @@ class Retriever:
         top_k_dense: int | None = None,
         top_k_lexical: int | None = None,
         rrf_k: int | None = None,
+        rrf_weights: Mapping[str, float] | None = None,
         max_per_document: int | None = None,
         rerank: bool | None = None,
         apply_authority: bool = True,
@@ -221,6 +225,8 @@ class Retriever:
             fused = reciprocal_rank_fusion(
                 {"dense": [c for c, _ in dense_hits], "lexical": [c for c, _ in lexical_hits]},
                 k=k_rrf,
+                weights=rrf_weights
+                or {"dense": s.rrf_dense_weight, "lexical": s.rrf_lexical_weight},
             )
             ordered = [e.id for e in fused]
             rrf = {e.id: e.rrf_score for e in fused}
@@ -249,15 +255,17 @@ class Retriever:
                 )
             )
 
+        # Reranking is a relevance signal over the fused head; the authority
+        # policy runs afterwards so it always has the final, inspectable say.
+        if use_reranker and self._reranker is not None and candidates:
+            candidates = self._rerank(query, candidates, limit=s.rerank_candidates)
+
         intent = detect_intent(query)
         conflicts: tuple[str, ...] = ()
         if apply_authority:
             candidates, conflicts = apply_authority_policy(
                 candidates, intent=intent, profile=profile
             )
-
-        if use_reranker and self._reranker is not None and candidates:
-            candidates = self._rerank(query, candidates, limit=s.rerank_candidates)
 
         group_of = {c.chunk_id: c.document_id for c in candidates}
         kept_ids = diversify([c.chunk_id for c in candidates], group_of, max_per_group=per_doc)
@@ -293,6 +301,18 @@ class Retriever:
         return reordered + tail
 
 
+def context_for(result: RetrievalResult, settings: Settings) -> ContextBlock:
+    """Render a retrieval result with the configured context budgets."""
+    return build_context(
+        result.candidates,
+        conflicts=result.conflicts,
+        total_budget_tokens=settings.context_budget_tokens,
+        per_document_budget_tokens=settings.context_per_document_tokens,
+        max_excerpts=settings.context_max_excerpts,
+        retrieval_mode=result.mode,
+    )
+
+
 def describe_channels(result: RetrievalResult) -> Mapping[str, int]:
     """Small summary used by the CLI and status surfaces."""
     return {
@@ -303,4 +323,4 @@ def describe_channels(result: RetrievalResult) -> Mapping[str, int]:
     }
 
 
-__all__ = ["VALID_MODES", "Retriever", "describe_channels", "hydrate_candidates"]
+__all__ = ["VALID_MODES", "Retriever", "context_for", "describe_channels", "hydrate_candidates"]

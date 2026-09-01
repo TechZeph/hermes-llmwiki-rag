@@ -91,8 +91,17 @@ class Settings:
     retrieval_top_k_dense: int = 50
     retrieval_top_k_lexical: int = 50
     retrieval_top_k_final: int = 10
-    rrf_k: int = 60
-    """Reciprocal-rank-fusion constant. Experiment seed, not a product guarantee."""
+    rrf_k: int = 20
+    """Reciprocal-rank-fusion constant. Selected on the dev split (docs/evaluation.md)."""
+    rrf_dense_weight: float = 1.0
+    rrf_lexical_weight: float = 2.0
+    """Per-channel RRF weights selected on the dev split; 1.0/1.0 is plain RRF."""
+    query_recipe: str = "query-v2-bge-instruction"
+    """Query embedding recipe id, selected on dev (see ``llmwiki.recipes.QUERY_RECIPES``)."""
+    context_budget_tokens: int = 1500
+    context_per_document_tokens: int = 600
+    context_max_excerpts: int = 8
+    """Context builder budgets (estimated tokens) for tool responses and injection."""
     max_chunks_per_document: int = 3
     """Document diversification cap applied after fusion (0 disables)."""
     reranker_enabled: bool = False

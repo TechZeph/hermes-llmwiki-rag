@@ -253,7 +253,7 @@ apple body text
         "recipe.document_embedding": "document-v1-structural",
         "recipe.embedding_dimension": "384",
         "recipe.embedding_model": "BAAI/bge-small-en-v1.5",
-        "recipe.query_embedding": "query-v1-raw",
+        "recipe.query_embedding": "query-v2-bge-instruction",
     }
 
 

@@ -126,3 +126,37 @@ corpus fingerprint.
 # compare recorded runs
 .venv/bin/llmwiki eval compare evals/runs/*.json
 ```
+
+## Recorded decisions
+
+### 2026-09-01 — Gate H: hybrid is the default (passed)
+
+Dev-split selection (78 questions): query recipe `query-v2-bge-instruction`,
+`rrf_k = 20`, channel weights dense 1.0 / lexical 2.0, 50 candidates per
+channel, 3 chunks per document. Grid results are in the session log; the
+best plain-RRF configuration (`k = 60`, equal weights) reached hit@5 0.971 /
+MRR 0.876 on dev against lexical's 0.971 / 0.894, and the selected
+configuration reached 0.986 / 0.889.
+
+Held-out (37 questions, one run after selection):
+
+| variant | hit@5 | recall@10 | MRR | nDCG@10 | authority@1 | p95 ms |
+|---|---|---|---|---|---|---|
+| dense | 0.848 | 0.786 | 0.773 | 0.726 | 0.848 | 77 |
+| lexical | 0.939 | 0.864 | 0.831 | 0.815 | 0.879 | 6 |
+| hybrid | 0.939 | 0.889 | 0.836 | 0.818 | 0.879 | 83 |
+
+Gate H clauses: hit@5 0.939 ≥ 0.919 ✔; MRR 0.836 ≥ 0.811 ✔; authority 0.879
+vs 0.879 ✔; p95 83 ms ≤ 250 ms ✔. `retrieval_mode = "hybrid"` is the default.
+
+Observation for later work: BM25 alone is unusually strong on this vault
+because the golden questions reuse the vault's own terminology; the
+dense channel mainly adds recall@10 and robustness on concept phrasing.
+
+### 2026-09-01 — Gate R: reranker (see below once the resource grid completes)
+
+`BAAI/bge-reranker-base` over 30 fused candidates on held-out: MRR 0.909
+(+0.073 over the final hybrid), nDCG@10 0.853 (+0.035), authority 0.879,
+but p95 7123 ms and peak RSS 3840 MB. Clauses 1–3 pass; clauses 4 and 5
+fail. The reranker stays opt-in unless a cheaper configuration selected on
+dev passes all five clauses on held-out.
