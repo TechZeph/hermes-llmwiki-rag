@@ -388,6 +388,115 @@ def search(
         click.echo("")
 
 
+@main.command()
+@click.option(
+    "--vault", type=click.Path(exists=True, file_okay=False, path_type=Path), default=None
+)
+@click.option("--db", type=click.Path(dir_okay=False, path_type=Path), default=None)
+@click.option("--queries", default=20, show_default=True, type=int, help="Queries per mode")
+@click.option("--json", "as_json", is_flag=True)
+def bench(vault: Path | None, db: Path | None, queries: int, as_json: bool) -> None:
+    """Measure no-change reindex time, retrieval latency per mode, and peak RSS."""
+    import resource
+    import statistics
+    import time as _time
+
+    from . import db as dbmod
+    from .embeddings import FastEmbedEmbedder
+    from .retrieval import Retriever
+
+    settings = _resolve_settings(vault=vault, db=db, watch=False, require_vault=True)
+    t0 = _time.perf_counter()
+    embedder = FastEmbedEmbedder(model_name=settings.embedding_model)
+    _ = embedder.dim
+    model_load_s = _time.perf_counter() - t0
+    t0 = _time.perf_counter()
+    stats = Indexer(settings, embedder=embedder).run(mode="incremental")
+    reindex_s = _time.perf_counter() - t0
+    with dbmod.connect(settings.db_path) as conn:
+        titles = [
+            str(r[0])
+            for r in conn.execute(
+                "SELECT title FROM documents WHERE source_kind = 'wiki' ORDER BY id LIMIT ?",
+                (max(queries, 1),),
+            ).fetchall()
+        ]
+        retriever = Retriever(conn, embedder=embedder, settings=settings)
+        latencies: dict[str, dict[str, float]] = {}
+        for mode in ("dense", "lexical", "hybrid"):
+            samples: list[float] = []
+            for title in titles:
+                t0 = _time.perf_counter()
+                retriever.retrieve(f"what does the wiki say about {title}?", mode=mode, top_k=10)
+                samples.append((_time.perf_counter() - t0) * 1000.0)
+            samples.sort()
+            latencies[mode] = {
+                "p50_ms": round(statistics.median(samples), 1) if samples else 0.0,
+                "p95_ms": round(
+                    samples[int(len(samples) * 0.95) - 1] if len(samples) > 1 else samples[0], 1
+                )
+                if samples
+                else 0.0,
+                "n": float(len(samples)),
+            }
+        counts = {
+            "documents": int(conn.execute("SELECT COUNT(*) FROM documents").fetchone()[0]),
+            "chunks": int(conn.execute("SELECT COUNT(*) FROM chunks").fetchone()[0]),
+        }
+    report = {
+        "model_load_s": round(model_load_s, 2),
+        "reindex_no_change_s": round(reindex_s, 2),
+        "reindex_seen": stats.documents_seen,
+        "latency": latencies,
+        "peak_rss_mb": round(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024.0, 1),
+        "counts": counts,
+    }
+    if as_json:
+        click.echo(json.dumps(report, indent=2))
+        return
+    click.echo(
+        f"model load: {report['model_load_s']} s; no-change reindex: {report['reindex_no_change_s']} s "
+        f"({stats.documents_seen} docs); peak RSS {report['peak_rss_mb']} MB"
+    )
+    for mode, lat in latencies.items():
+        click.echo(
+            f"  {mode:8} p50={lat['p50_ms']:.0f} ms p95={lat['p95_ms']:.0f} ms (n={int(lat['n'])})"
+        )
+
+
+@main.command()
+@click.option(
+    "--vault", type=click.Path(exists=True, file_okay=False, path_type=Path), default=None
+)
+@click.option("--db", type=click.Path(dir_okay=False, path_type=Path), default=None)
+@click.option("--profile", "default_profile", default="answer", show_default=True)
+@click.option("--max-results", default=6, show_default=True, type=int)
+@click.option("--allow-full-rebuild", is_flag=True, help="Permit mode=full reindex over MCP")
+@click.option("--watch", is_flag=True, help="Keep the projection fresh while the server runs")
+def mcp(
+    vault: Path | None,
+    db: Path | None,
+    default_profile: str,
+    max_results: int,
+    allow_full_rebuild: bool,
+    watch: bool,
+) -> None:
+    """Serve llmwiki_search / llmwiki_status / llmwiki_reindex over MCP (stdio transport)."""
+    from .mcp_server import serve_stdio
+    from .service import ServiceConfig
+
+    settings = _resolve_settings(vault=vault, db=db, watch=False, require_vault=True)
+    config = ServiceConfig(
+        vault=str(settings.vault_path),
+        db=str(settings.db_path),
+        default_profile=default_profile,
+        max_results=max_results,
+        allow_full_rebuild=allow_full_rebuild,
+        watch=watch,
+    )
+    serve_stdio(config)
+
+
 @main.group()
 def eval() -> None:
     """Golden-set evaluation of retrieval variants."""

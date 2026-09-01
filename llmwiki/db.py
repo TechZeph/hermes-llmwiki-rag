@@ -513,7 +513,9 @@ def _backfill_orphan_chunks(conn: sqlite3.Connection, *, log: bool = False) -> N
     if log:
         logger.info("schema v1->v2 backfill: chunking %d existing documents", len(rows))
     else:
-        logger.info("orphan-chunks backfill: chunking %d documents", len(rows))
+        # Documents whose body yields no chunks (frontmatter-only or empty
+        # files) legitimately have none; keep this quiet unless work happens.
+        logger.debug("orphan-chunks backfill: checking %d documents", len(rows))
     from pathlib import Path
 
     from .indexer import VaultFile
