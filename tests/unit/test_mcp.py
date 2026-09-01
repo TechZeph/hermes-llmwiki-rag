@@ -57,7 +57,7 @@ def _schema(tool):
 def test_tools_are_registered(server) -> None:
     tools = _run(server.list_tools())
     names = {t.name for t in tools}
-    assert names == {"llmwiki_search", "llmwiki_status", "llmwiki_reindex"}
+    assert names == {"llmwiki_search", "llmwiki_status", "llmwiki_reindex", "llmwiki_related"}
     search = next(t for t in tools if t.name == "llmwiki_search")
     assert "query" in _schema(search)["properties"]
     assert _schema(search).get("required") == ["query"]

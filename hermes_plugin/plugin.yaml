@@ -2,7 +2,7 @@ name: llmwiki
 version: 0.1.0
 manifest_version: 2
 api_version: 1
-description: "Local-first, authority-aware retrieval over an Obsidian LLM wiki: hybrid BM25 + dense search with cited, budgeted context. Tools: llmwiki_search, llmwiki_status, llmwiki_reindex. Optional opt-in pre_llm_call injection (default off)."
+description: "Local-first, authority-aware retrieval over an Obsidian LLM wiki: hybrid BM25 + dense search with cited, budgeted context. Tools: llmwiki_search, llmwiki_status, llmwiki_reindex, llmwiki_related. Optional opt-in pre_llm_call injection (default off)."
 author: "Zeph (TechZeph)"
 kind: backend
 license: MIT
@@ -12,6 +12,7 @@ provides_tools:
   - llmwiki_search
   - llmwiki_status
   - llmwiki_reindex
+  - llmwiki_related
 provides_hooks:
   - pre_llm_call
   - on_session_start

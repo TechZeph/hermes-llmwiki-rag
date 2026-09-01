@@ -28,7 +28,7 @@ TOOLSET = "llmwiki"
 def register(ctx: Any) -> None:
     """Register the llmwiki tools and the opt-in ``pre_llm_call`` hook."""
     from .runtime import PluginConfig, PluginRuntime
-    from .schemas import REINDEX_SCHEMA, SEARCH_SCHEMA, STATUS_SCHEMA
+    from .schemas import REINDEX_SCHEMA, RELATED_SCHEMA, SEARCH_SCHEMA, STATUS_SCHEMA
     from .tools import make_handlers
 
     def get(key: str, default: Any) -> Any:
@@ -68,6 +68,14 @@ def register(ctx: Any) -> None:
         handler=handlers.reindex,
         description=REINDEX_SCHEMA["description"],
         emoji="🔄",
+    )
+    ctx.register_tool(
+        name="llmwiki_related",
+        toolset=TOOLSET,
+        schema=RELATED_SCHEMA,
+        handler=handlers.related,
+        description=RELATED_SCHEMA["description"],
+        emoji="🕸️",
     )
     # Always registered so the manifest and the runtime agree; it returns
     # None unless auto_inject is enabled and a calibrated gate exists.

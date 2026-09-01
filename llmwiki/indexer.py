@@ -33,6 +33,7 @@ from .chunks import delete_chunks_for_document, insert_chunks
 from .config import Settings
 from .corpus import classify_path
 from .embeddings import Embedder, model_provenance
+from .entities import refresh_entity_graph
 from .graph import replace_document_links, resolve_links
 from .logging import get_logger
 from .models import Document, IndexRunStats
@@ -485,6 +486,16 @@ class Indexer:
                 links_resolved = resolve_links(conn)
             if links_resolved:
                 logger.info("resolved %d wikilink(s)", links_resolved)
+            changed = added + updated + removed
+            has_entities = int(conn.execute("SELECT COUNT(*) FROM communities").fetchone()[0])
+            if changed or not has_entities:
+                with dbmod.transaction(conn):
+                    entity_stats = refresh_entity_graph(conn)
+                logger.info(
+                    "entity graph: %d mention edge(s), %d communit(ies)",
+                    entity_stats["mention_edges"],
+                    entity_stats["communities"],
+                )
             _finish_run(
                 conn,
                 run_id,
@@ -836,9 +847,10 @@ def summarise_database(db_path: Path) -> dict[str, object]:
             # Pre-Phase-3 database without the embeddings table.
             embeddings = 0
         try:
+            from .entities import graph_counts
             from .graph import graph_summary
 
-            graph = graph_summary(conn)
+            graph = {**graph_summary(conn), **graph_counts(conn)}
         except sqlite3.OperationalError:
             graph = {"links": 0, "resolved": 0, "unresolved": 0}
         last_run_row = conn.execute(

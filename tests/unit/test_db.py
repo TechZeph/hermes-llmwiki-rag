@@ -139,7 +139,7 @@ def test_init_schema_upgrades_real_legacy_v1_fixture(tmp_path: Path) -> None:
             "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'projection_meta'"
         ).fetchone()
 
-    assert version == "7"
+    assert version == "8"
     assert chunk_count >= 1
     assert projection_meta is not None
 
@@ -161,7 +161,7 @@ def test_init_schema_upgrades_real_legacy_v2_fixture(tmp_path: Path) -> None:
             "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'projection_meta'"
         ).fetchone()
 
-    assert version == "7"
+    assert version == "8"
     assert embedding_table is not None
     assert projection_meta is not None
 
@@ -185,13 +185,13 @@ def test_init_schema_runs_historical_migrations_in_order_once(
         return migration
 
     monkeypatch.setattr(
-        dbmod, "_MIGRATIONS", {version: record(version) for version in (1, 2, 3, 4, 5, 6)}
+        dbmod, "_MIGRATIONS", {version: record(version) for version in (1, 2, 3, 4, 5, 6, 7)}
     )
     with dbmod.connect(db_path) as conn:
         dbmod.init_schema(conn)
         dbmod.init_schema(conn)
 
-    assert calls == [1, 2, 3, 4, 5, 6]
+    assert calls == [1, 2, 3, 4, 5, 6, 7]
 
 
 def test_failed_historical_migration_rolls_back_prior_schema_and_version(
@@ -253,7 +253,7 @@ def test_init_schema_migrates_v3_database_to_current_version(tmp_path: Path) -> 
             "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'projection_meta'"
         ).fetchone()
 
-    assert version == "7"
+    assert version == "8"
     assert documents == [("note.md",)]
     assert metadata_table is not None
 

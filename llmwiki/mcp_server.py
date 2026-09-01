@@ -115,6 +115,21 @@ def build_server(
             return json.dumps({"error": {"type": "reindex-failed", "message": type(exc).__name__}})
         return json.dumps(payload, ensure_ascii=False, default=str)
 
+    @server.tool(
+        name="llmwiki_related",
+        description=(
+            "List pages related to a vault-relative page path via links, backlinks, title "
+            "mentions and graph community."
+        ),
+    )
+    def llmwiki_related(path: str, limit: int = 20) -> str:
+        try:
+            return json.dumps(service.related(path, limit=int(limit)), ensure_ascii=False)
+        except ValueError as exc:
+            return json.dumps({"error": {"type": "configuration", "message": str(exc)}})
+        except Exception as exc:
+            return json.dumps({"error": {"type": "related-failed", "message": type(exc).__name__}})
+
     server.llmwiki_service = service  # type: ignore[attr-defined]
     return server
 

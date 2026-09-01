@@ -80,4 +80,26 @@ REINDEX_SCHEMA: dict[str, Any] = {
     },
 }
 
-__all__ = ["REINDEX_SCHEMA", "SEARCH_SCHEMA", "STATUS_SCHEMA"]
+RELATED_SCHEMA: dict[str, Any] = {
+    "name": "llmwiki_related",
+    "description": (
+        "List pages related to one wiki page by outgoing links, backlinks, title mentions and "
+        "graph community. Input is a vault-relative Markdown path as returned by llmwiki_search."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "path": {
+                "type": "string",
+                "description": "Vault-relative path, e.g. wiki/sqlite-vec.md",
+            },
+            "limit": {
+                "type": "integer",
+                "description": "Maximum related pages (1-50, default 20).",
+            },
+        },
+        "required": ["path"],
+    },
+}
+
+__all__ = ["REINDEX_SCHEMA", "RELATED_SCHEMA", "SEARCH_SCHEMA", "STATUS_SCHEMA"]

@@ -28,7 +28,7 @@ from .logging import get_logger
 
 logger = get_logger("db")
 
-_SCHEMA_VERSION: Final = 7
+_SCHEMA_VERSION: Final = 8
 
 # sqlite-vec needs the embedding dimension as a schema literal. The
 # plan locks BGE-small-en-v1.5 (384-dim). If we ever swap models we
@@ -275,6 +275,24 @@ def _migrate_v6_to_v7(conn: sqlite3.Connection) -> None:
         )
 
 
+def _migrate_v7_to_v8(conn: sqlite3.Connection) -> None:
+    """Add page-mention edges and community labels (rebuilt at the end of each run)."""
+    for statement in (
+        """CREATE TABLE IF NOT EXISTS mentions (
+            chunk_id INTEGER NOT NULL REFERENCES chunks(id) ON DELETE CASCADE,
+            document_id INTEGER NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+            PRIMARY KEY (chunk_id, document_id)
+        )""",
+        "CREATE INDEX IF NOT EXISTS idx_mentions_document ON mentions(document_id)",
+        """CREATE TABLE IF NOT EXISTS communities (
+            document_id INTEGER PRIMARY KEY REFERENCES documents(id) ON DELETE CASCADE,
+            community_id INTEGER NOT NULL
+        )""",
+        "CREATE INDEX IF NOT EXISTS idx_communities_community ON communities(community_id)",
+    ):
+        conn.execute(statement)
+
+
 Migration = Callable[[sqlite3.Connection], None]
 _MIGRATIONS: dict[int, Migration] = {
     0: _migrate_v0_to_v1,
@@ -284,6 +302,7 @@ _MIGRATIONS: dict[int, Migration] = {
     4: _migrate_v4_to_v5,
     5: _migrate_v5_to_v6,
     6: _migrate_v6_to_v7,
+    7: _migrate_v7_to_v8,
 }
 
 
@@ -298,6 +317,8 @@ def clear_projection(conn: sqlite3.Connection) -> None:
         conn.execute("DELETE FROM chunk_embeddings")
         conn.execute("DELETE FROM chunks_fts")
         conn.execute("DELETE FROM chunks")
+        conn.execute("DELETE FROM mentions")
+        conn.execute("DELETE FROM communities")
         conn.execute("DELETE FROM links")
         conn.execute("DELETE FROM link_keys")
         conn.execute("DELETE FROM documents")

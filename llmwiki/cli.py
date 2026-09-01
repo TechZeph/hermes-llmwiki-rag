@@ -502,6 +502,49 @@ def mcp(
     serve_stdio(config)
 
 
+@main.command()
+@click.argument("path")
+@click.option("--db", type=click.Path(dir_okay=False, path_type=Path), default=None)
+@click.option("--limit", default=20, show_default=True, type=int)
+@click.option("--json", "as_json", is_flag=True)
+def related(path: str, db: Path | None, limit: int, as_json: bool) -> None:
+    """Pages related to PATH by links, backlinks, title mentions and community."""
+    from . import db as dbmod
+    from .entities import related_pages
+
+    base = Settings.from_env()
+    db_path = (db or base.db_path).expanduser().resolve()
+    with dbmod.connect(db_path) as conn:
+        dbmod.init_schema(conn)
+        pages = related_pages(conn, path.strip().lstrip("/"), limit=limit)
+    if as_json:
+        click.echo(json.dumps([p.__dict__ for p in pages], indent=2, ensure_ascii=False))
+        return
+    if not pages:
+        click.echo("no related pages (unknown path or isolated page).")
+        return
+    for p in pages:
+        click.echo(f"{p.weight:3}  {p.relation:15} {p.path}  ({p.title})")
+
+
+@main.command()
+@click.option("--db", type=click.Path(dir_okay=False, path_type=Path), default=None)
+@click.option("--limit", default=10, show_default=True, type=int)
+def communities(db: Path | None, limit: int) -> None:
+    """Largest link/mention communities in the projection."""
+    from . import db as dbmod
+    from .entities import community_summary
+
+    base = Settings.from_env()
+    db_path = (db or base.db_path).expanduser().resolve()
+    with dbmod.connect(db_path) as conn:
+        dbmod.init_schema(conn)
+        for c in community_summary(conn, limit=limit):
+            titles = c["sample_titles"]
+            sample = ", ".join(str(t) for t in titles) if isinstance(titles, list) else ""
+            click.echo(f"community {c['community_id']:5} size={c['size']:4}  {sample}")
+
+
 @main.group()
 def eval() -> None:
     """Golden-set evaluation of retrieval variants."""
@@ -702,6 +745,32 @@ def eval_regress(baseline: Path, candidate: Path) -> None:
         raise click.ClickException("runs are not comparable: " + "; ".join(report["problems"]))
     if report["regression"]:
         raise click.ClickException("regression: " + "; ".join(report["problems"]))
+
+
+@eval.command("report")
+@click.option(
+    "--runs",
+    "runs_dir",
+    type=click.Path(exists=True, file_okay=False, path_type=Path),
+    default=Path("evals/runs"),
+    show_default=True,
+)
+@click.option(
+    "--out",
+    "out_path",
+    type=click.Path(dir_okay=False, path_type=Path),
+    default=Path("docs/benchmarks.md"),
+    show_default=True,
+)
+def eval_report(runs_dir: Path, out_path: Path) -> None:
+    """Render docs/benchmarks.md from recorded runs (latest per golden/split/variant)."""
+    from .evaluation.runner import format_benchmark_markdown, load_run
+
+    runs = [load_run(p) for p in sorted(runs_dir.glob("*.json"))]
+    if not runs:
+        raise click.ClickException(f"no run records in {runs_dir}")
+    out_path.write_text(format_benchmark_markdown(runs), encoding="utf-8")
+    click.echo(f"wrote {out_path} from {len(runs)} run(s)")
 
 
 @eval.command("compare")

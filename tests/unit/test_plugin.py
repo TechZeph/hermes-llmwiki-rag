@@ -66,7 +66,12 @@ def test_register_declares_manifest_tools_and_hook(vault_and_db) -> None:
     ctx = FakeContext({"vault": str(vault), "db": str(db)})
     hermes_plugin.register(ctx)
     manifest = (Path(hermes_plugin.__file__).parent / "plugin.yaml").read_text()
-    assert set(ctx.tools) == {"llmwiki_search", "llmwiki_status", "llmwiki_reindex"}
+    assert set(ctx.tools) == {
+        "llmwiki_search",
+        "llmwiki_status",
+        "llmwiki_reindex",
+        "llmwiki_related",
+    }
     for name in ctx.tools:
         assert f"- {name}" in manifest
         assert ctx.tools[name]["toolset"] == "llmwiki"
@@ -145,7 +150,7 @@ def test_status_tool_reports_projection_without_paths(vault_and_db) -> None:
     status = json.loads(handlers.status({}))
     assert status["configured"] is True
     assert status["vault"] == vault.name
-    assert status["integrity"]["ok"] is True and status["integrity"]["schema_version"] == 7
+    assert status["integrity"]["ok"] is True and status["integrity"]["schema_version"] == 8
     assert (
         status["counts"]["documents"] > 0
         and status["counts"]["chunks_fts"] == status["counts"]["chunks"]

@@ -88,6 +88,20 @@ class Handlers:
             return _error("reindex-failed", type(exc).__name__)
         return _dump(payload)
 
+    def related(self, args: dict[str, Any], **_: Any) -> str:
+        path = str(args.get("path") or "").strip()
+        if not path:
+            return _error("invalid-argument", "path is required")
+        try:
+            payload = self.runtime.related(
+                path, limit=_coerce_int(args.get("limit"), 20, 1, 50) or 20
+            )
+        except ConfigError as exc:
+            return _error("configuration", str(exc))
+        except Exception as exc:
+            return _error("related-failed", type(exc).__name__)
+        return _dump(payload)
+
     def on_session_start(self, **kwargs: Any) -> None:
         """Lazy watcher start on the first session; never returns content."""
         self.runtime.ensure_watcher()

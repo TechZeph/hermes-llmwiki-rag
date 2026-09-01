@@ -347,6 +347,33 @@ class WikiService:
             payload["context_tokens"] = block.total_tokens
         return payload
 
+    # --- related pages ----------------------------------------------------------
+
+    def related(self, path: str, *, limit: int = 20) -> dict[str, Any]:
+        from .entities import related_pages
+
+        settings = self.settings
+        rel = (path or "").strip().lstrip("/")
+        if not rel or ".." in rel.split("/"):
+            raise ConfigError("path must be a vault-relative Markdown path")
+        with dbmod.connect(settings.db_path) as conn:
+            if not self._schema_ready:
+                dbmod.init_schema(conn)
+                self._schema_ready = True
+            exists = conn.execute("SELECT title FROM documents WHERE path = ?", (rel,)).fetchone()
+            if exists is None:
+                return {"path": rel, "found": False, "related": []}
+            pages = related_pages(conn, rel, limit=max(1, min(limit, 50)))
+        return {
+            "path": rel,
+            "title": str(exists[0]),
+            "found": True,
+            "related": [
+                {"path": p.path, "title": p.title, "relation": p.relation, "weight": p.weight}
+                for p in pages
+            ],
+        }
+
     # --- status ---------------------------------------------------------------
 
     def status(self) -> dict[str, Any]:
