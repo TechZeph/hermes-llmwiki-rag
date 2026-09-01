@@ -66,6 +66,16 @@ Single channels for comparison on v2 held-out: lexical hit@5 0.870 / MRR
 
 ## Quick start
 
+One line (Python 3.11+ with FTS5; creates a private virtualenv, installs the
+package, links `~/.local/bin/llmwiki`, then runs the first-run setup):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/TechZeph/hermes-llmwiki-rag/main/install.sh | bash
+# from a checkout: ./install.sh        add --hermes to wire the Hermes plugin as well
+```
+
+Or by hand:
+
 ```bash
 # 1. install (Python 3.11+; editable, with dev tools)
 python -m venv .venv

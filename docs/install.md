@@ -12,6 +12,22 @@ same local models.
   by FastEmbed into `~/.cache/fastembed` (override with `FASTEMBED_CACHE_PATH`).
 - Disk for the projection: roughly 3–4× the vault's Markdown size.
 
+## One-line installer
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/TechZeph/hermes-llmwiki-rag/main/install.sh | bash
+```
+
+`install.sh` checks for Python 3.11+ with FTS5, creates a virtualenv at
+`~/.local/share/llmwiki/venv`, installs `hermes-llmwiki-rag[mcp]` (the
+current checkout when run from one), links `~/.local/bin/llmwiki`, and runs
+`llmwiki init`. Options: `--hermes` (also install into the Hermes venv, link
+and enable the plugin), `--no-init`, `--dry-run`, and `-- <init args>`.
+Environment overrides: `LLMWIKI_INSTALL_DIR`, `LLMWIKI_BIN_DIR`, `PYTHON`,
+`LLMWIKI_PACKAGE`. It installs Python dependencies only; Obsidian is optional
+and `init` says so (and offers to open a new starter vault in it when it is
+installed).
+
 ## Standalone CLI
 
 ```bash

@@ -151,7 +151,10 @@ def test_plugin_falls_back_to_user_config_and_slash_setup(isolated: Path) -> Non
 def test_init_interactive_menu_creates_starter_vault(
     isolated: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    import shutil
+
     monkeypatch.setenv("HOME", str(isolated / "home"))
+    monkeypatch.setattr(shutil, "which", lambda name: None)  # no Obsidian prompt
     (isolated / "home").mkdir()
     runner = CliRunner()
     # No vaults found -> options: 1 enter a path, 2 create starter. Choose 2, decline indexing.
@@ -165,3 +168,76 @@ def test_init_interactive_menu_creates_starter_vault(
     result = runner.invoke(main, ["init", "--interactive", "--no-index"], input="\n")
     assert result.exit_code == 0, result.output
     assert "1. " in result.output and str(created) in result.output
+
+
+def test_obsidian_detection_and_open_command(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import shutil
+
+    from llmwiki.setup import find_obsidian, obsidian_open_command, open_in_obsidian
+
+    monkeypatch.setattr(shutil, "which", lambda name: None)
+    import sys
+
+    monkeypatch.setattr(sys, "platform", "linux")
+    monkeypatch.setenv("HOME", str(tmp_path))
+    assert find_obsidian() is None
+    assert open_in_obsidian(tmp_path) is False
+    monkeypatch.setattr(
+        shutil, "which", lambda name: "/usr/bin/obsidian" if name == "obsidian" else None
+    )
+    assert find_obsidian() == "/usr/bin/obsidian"
+    cmd = obsidian_open_command("/usr/bin/obsidian", tmp_path / "my vault")
+    assert (
+        cmd[0] == "/usr/bin/obsidian"
+        and cmd[1].startswith("obsidian://open?path=")
+        and "%20vault" in cmd[1]
+    )
+    mac = obsidian_open_command("open -a Obsidian", tmp_path)
+    assert mac[:3] == ["open", "-a", "Obsidian"]
+
+
+def test_init_starter_mentions_obsidian(isolated: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import shutil
+
+    monkeypatch.setattr(shutil, "which", lambda name: None)
+    result = CliRunner().invoke(
+        main, ["init", "--create", str(isolated / "nv"), "--no-index", "--yes"]
+    )
+    assert result.exit_code == 0, result.output
+    assert "Obsidian is optional" in result.output and "obsidian.md/download" in result.output
+
+
+def test_install_script_dry_run(tmp_path: Path) -> None:
+    import os
+    import subprocess
+
+    repo = Path(__file__).resolve().parents[2]
+    env = dict(
+        os.environ,
+        HOME=str(tmp_path),
+        LLMWIKI_INSTALL_DIR=str(tmp_path / "venv"),
+        LLMWIKI_BIN_DIR=str(tmp_path / "bin"),
+        HERMES_HOME=str(tmp_path / "no-hermes"),
+    )
+    out = subprocess.run(
+        ["bash", str(repo / "install.sh"), "--dry-run", "--no-init"],
+        capture_output=True,
+        text=True,
+        env=env,
+        check=True,
+    ).stdout
+    assert "package source: checkout" in out and "would run:" in out and "pip install" in out
+    assert "skipped init" in out
+    syntax = subprocess.run(
+        ["bash", "-n", str(repo / "install.sh")], capture_output=True, text=True
+    )
+    assert syntax.returncode == 0, syntax.stderr
+    hermes = subprocess.run(
+        ["bash", str(repo / "install.sh"), "--dry-run", "--no-init", "--hermes"],
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+    assert hermes.returncode == 1 and "Hermes venv not found" in hermes.stderr

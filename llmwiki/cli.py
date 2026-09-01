@@ -204,10 +204,13 @@ def init(
 ) -> None:
     """Pick or create a vault, save it to ~/.config/llmwiki/config.toml, run the first index."""
     from .setup import (
+        OBSIDIAN_DOWNLOAD_URL,
         create_starter_vault,
         discover_vaults,
         estimate_first_index,
+        find_obsidian,
         looks_like_vault,
+        open_in_obsidian,
     )
     from .userconfig import update_user_config
 
@@ -252,6 +255,23 @@ def init(
         raise click.UsageError("non-interactive: pass a vault PATH or --create PATH")
 
     assert chosen is not None
+    created_starter = create_path is not None or chosen.name == "llmwiki-vault"
+    if created_starter:
+        launcher = find_obsidian()
+        if launcher:
+            click.echo(
+                f"Obsidian found ({launcher.split()[0]}); it is optional, llmwiki reads plain Markdown."
+            )
+            if interactive and click.confirm("Open the new vault in Obsidian now?", default=False):
+                click.echo(
+                    "opening in Obsidian"
+                    if open_in_obsidian(chosen, launcher=launcher)
+                    else "could not launch Obsidian"
+                )
+        else:
+            click.echo(
+                f"Obsidian is optional (llmwiki reads plain Markdown); get it at {OBSIDIAN_DOWNLOAD_URL} if you want a GUI for this vault."
+            )
     updates = {"vault": str(chosen)}
     if db is not None:
         updates["db"] = str(db.expanduser().resolve())

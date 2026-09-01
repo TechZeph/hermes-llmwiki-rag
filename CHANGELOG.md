@@ -31,6 +31,9 @@ its Hermes plugin.
   `doctor`, `config show|set`, `index` (with `--watch`), `search`, `status`,
   `integrity`, `related`, `communities`, `bench`, `mcp`, and
   `eval validate|run|compare|regress|calibrate|report`.
+- `install.sh` one-line installer (venv, package, launcher, optional Hermes
+  wiring, first-run setup); `init` detects Obsidian and offers to open a new
+  starter vault, and points to the download when it is absent.
 - Persistent user config at `~/.config/llmwiki/config.toml`; the Hermes plugin
   falls back to it, and a `/llmwiki` slash command offers status, setup,
   reindex and doctor inside sessions.

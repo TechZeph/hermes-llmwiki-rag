@@ -119,6 +119,66 @@ def create_starter_vault(path: Path) -> Path:
     return path
 
 
+OBSIDIAN_DOWNLOAD_URL: Final = "https://obsidian.md/download"
+
+
+def find_obsidian() -> str | None:
+    """Return how Obsidian can be launched on this machine, or ``None``.
+
+    Obsidian is optional for llmwiki (it reads plain Markdown); this only
+    lets ``init`` offer to open a freshly created vault.
+    """
+    import shutil
+    import sys
+
+    for name in ("obsidian", "Obsidian"):
+        found = shutil.which(name)
+        if found:
+            return found
+    if sys.platform == "darwin" and Path("/Applications/Obsidian.app").exists():
+        return "open -a Obsidian"
+    if Path("/snap/bin/obsidian").exists():
+        return "/snap/bin/obsidian"
+    flatpak = shutil.which("flatpak")
+    if flatpak:
+        for base in (Path.home() / ".local/share/flatpak", Path("/var/lib/flatpak")):
+            if (base / "app" / "md.obsidian.Obsidian").exists():
+                return f"{flatpak} run md.obsidian.Obsidian"
+    for candidate in sorted((Path.home() / "Applications").glob("Obsidian*.AppImage")):
+        if os.access(candidate, os.X_OK):
+            return str(candidate)
+    return None
+
+
+def obsidian_open_command(launcher: str, vault: Path) -> list[str]:
+    """Command that opens ``vault`` in Obsidian via its ``obsidian://`` URI."""
+    from urllib.parse import quote
+
+    uri = "obsidian://open?path=" + quote(str(vault.resolve()), safe="/")
+    if launcher == "open -a Obsidian":
+        return ["open", "-a", "Obsidian", uri]
+    return [*launcher.split(), uri]
+
+
+def open_in_obsidian(vault: Path, *, launcher: str | None = None) -> bool:
+    """Launch Obsidian on ``vault`` in the background; False when unavailable."""
+    import subprocess
+
+    launcher = launcher or find_obsidian()
+    if not launcher:
+        return False
+    try:
+        subprocess.Popen(
+            obsidian_open_command(launcher, vault),
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+        return True
+    except OSError:
+        return False
+
+
 def estimate_first_index(vault: Path) -> tuple[int, int]:
     """Return ``(markdown_files, estimated_minutes)`` for a cold first index."""
     files = sum(1 for _ in vault.rglob("*.md"))
@@ -128,10 +188,14 @@ def estimate_first_index(vault: Path) -> tuple[int, int]:
 
 
 __all__ = [
+    "OBSIDIAN_DOWNLOAD_URL",
     "STARTER_PAGES",
     "VaultCandidate",
     "create_starter_vault",
     "discover_vaults",
     "estimate_first_index",
+    "find_obsidian",
     "looks_like_vault",
+    "obsidian_open_command",
+    "open_in_obsidian",
 ]
