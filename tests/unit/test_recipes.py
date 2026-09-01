@@ -34,20 +34,26 @@ def test_document_recipe_preserves_structural_context_before_chunk_body() -> Non
 
 def test_document_recipe_omits_empty_optional_metadata() -> None:
     """Sparse notes do not gain empty labels that add embedding noise."""
-    assert format_document_embedding_input(
-        title="Untitled",
-        heading_path=(),
-        aliases=(),
-        tags=(),
-        body="body",
-    ) == "Title: Untitled\n\nbody"
+    assert (
+        format_document_embedding_input(
+            title="Untitled",
+            heading_path=(),
+            aliases=(),
+            tags=(),
+            body="body",
+        )
+        == "Title: Untitled\n\nbody"
+    )
 
 
 def test_query_recipe_is_independently_versioned_and_currently_raw() -> None:
     """The first query recipe remains a measurable raw-query baseline."""
     assert CHUNKER_RECIPE_VERSION == "chunker-v1-heading-char-2000"
     assert QUERY_EMBEDDING_RECIPE_VERSION == "query-v1-raw"
-    assert format_query_embedding_input("  What is the current RAG state?  ") == "What is the current RAG state?"
+    assert (
+        format_query_embedding_input("  What is the current RAG state?  ")
+        == "What is the current RAG state?"
+    )
 
 
 def test_embedding_recipe_state_records_versions_model_and_actual_dimension() -> None:

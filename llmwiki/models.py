@@ -109,4 +109,58 @@ class Chunk:
     position: int
 
 
-__all__ = ["Chunk", "Document", "IndexRunStats"]
+@dataclass(frozen=True, slots=True)
+class Candidate:
+    """One retrieved chunk with every raw channel metric preserved.
+
+    Scores from different channels are deliberately kept in separate
+    fields. ``dense_distance`` is the sqlite-vec cosine distance (smaller
+    is closer), ``bm25_score`` is the negated FTS5 ``bm25()`` value
+    (larger is better), ``rrf_score`` is rank fusion (relative ordering
+    only, never confidence), and ``rerank_score`` is a cross-encoder
+    logit when a reranker ran. ``None`` means the channel did not
+    return this chunk.
+    """
+
+    chunk_id: int
+    document_id: int
+    path: str
+    title: str
+    heading_path: tuple[str, ...]
+    section_name: str
+    position: int
+    text: str
+    text_hash: str
+    source_kind: str
+    page_role: str
+    project_id: str | None
+    updated_at_ns: int
+    is_route_map: bool
+    dense_rank: int | None = None
+    dense_distance: float | None = None
+    lexical_rank: int | None = None
+    bm25_score: float | None = None
+    rrf_score: float | None = None
+    rerank_score: float | None = None
+    authority_class: str = ""
+    authority_match: bool | None = None
+    selection_reason: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class RetrievalResult:
+    """Ordered candidates plus the parameters that produced them."""
+
+    query: str
+    profile: str
+    mode: str
+    candidates: tuple[Candidate, ...]
+    dense_returned: int = 0
+    lexical_returned: int = 0
+    fused_total: int = 0
+    intent: str = ""
+    conflicts: tuple[str, ...] = ()
+    elapsed_ms: float = 0.0
+
+
+__all__ = ["Candidate", "Chunk", "Document", "IndexRunStats", "RetrievalResult"]

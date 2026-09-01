@@ -1,6 +1,6 @@
 """SQLite schema and connection helpers for the RAG core.
 
-The database is the single source of truth for:
+The database is a rebuildable projection of the canonical Markdown vault. It holds:
 
 - Document metadata (path, mtime, content hash, frontmatter, tags, wikilinks, aliases).
 - Chunk metadata (heading path, text, hash, position; Phase 2).
@@ -10,8 +10,8 @@ The database is the single source of truth for:
 - Retrieval runs and eval results (Phase 13).
 
 The schema is defined in code as an ordered migration registry. ``init_schema``
-upgrades an empty v0 database and every released v1, v2, or v3 database through
-v4, committing each transition atomically.
+upgrades an empty v0 database and every released database through the
+current version, committing each transition atomically.
 """
 
 from __future__ import annotations
@@ -28,7 +28,7 @@ from .logging import get_logger
 
 logger = get_logger("db")
 
-_SCHEMA_VERSION: Final = 5
+_SCHEMA_VERSION: Final = 6
 
 # sqlite-vec needs the embedding dimension as a schema literal. The
 # plan locks BGE-small-en-v1.5 (384-dim). If we ever swap models we
@@ -203,6 +203,40 @@ def _migrate_v4_to_v5(conn: sqlite3.Connection) -> None:
     )
 
 
+def _migrate_v5_to_v6(conn: sqlite3.Connection) -> None:
+    """Add the trigger-maintained FTS5 lexical projection and backfill it.
+
+    ``chunks_fts`` stores its own copy of the indexed columns (not an
+    external-content table) so a cascading document delete can remove
+    rows by rowid without needing the parent title, which is already
+    gone by the time the chunk trigger fires.
+    """
+    from .lexical import FTS_TABLE, FTS_TOKENIZER, Fts5Index
+
+    conn.execute(
+        f"""CREATE VIRTUAL TABLE IF NOT EXISTS {FTS_TABLE} USING fts5(
+            text, section_name, heading, title,
+            tokenize = '{FTS_TOKENIZER}'
+        )"""
+    )
+    conn.execute(
+        f"""CREATE TRIGGER IF NOT EXISTS chunks_fts_ai AFTER INSERT ON chunks BEGIN
+            INSERT INTO {FTS_TABLE}(rowid, text, section_name, heading, title)
+            VALUES (
+                new.id, new.text, new.section_name,
+                (SELECT group_concat(value, ' ') FROM json_each(new.heading_path_json)),
+                (SELECT title FROM documents WHERE id = new.document_id)
+            );
+        END"""
+    )
+    conn.execute(
+        f"""CREATE TRIGGER IF NOT EXISTS chunks_fts_ad AFTER DELETE ON chunks BEGIN
+            DELETE FROM {FTS_TABLE} WHERE rowid = old.id;
+        END"""
+    )
+    Fts5Index(conn).rebuild()
+
+
 Migration = Callable[[sqlite3.Connection], None]
 _MIGRATIONS: dict[int, Migration] = {
     0: _migrate_v0_to_v1,
@@ -210,6 +244,7 @@ _MIGRATIONS: dict[int, Migration] = {
     2: _migrate_v2_to_v3,
     3: _migrate_v3_to_v4,
     4: _migrate_v4_to_v5,
+    5: _migrate_v5_to_v6,
 }
 
 
@@ -222,6 +257,8 @@ def clear_projection(conn: sqlite3.Connection) -> None:
     """
     with transaction(conn):
         conn.execute("DELETE FROM chunk_embeddings")
+        conn.execute("DELETE FROM chunks_fts")
+        conn.execute("DELETE FROM chunks")
         conn.execute("DELETE FROM documents")
         conn.execute("DELETE FROM index_runs")
         conn.execute("DELETE FROM projection_meta")
@@ -323,6 +360,25 @@ def inspect_integrity(db_path: Path, *, vault_path: Path | None = None) -> dict[
                 """
             ).fetchone()[0]
         )
+        fts_present = (
+            conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'chunks_fts'"
+            ).fetchone()
+            is not None
+        )
+        orphan_fts_rows = 0
+        chunks_without_fts = 0
+        if fts_present:
+            orphan_fts_rows = int(
+                conn.execute(
+                    "SELECT COUNT(*) FROM chunks_fts WHERE rowid NOT IN (SELECT id FROM chunks)"
+                ).fetchone()[0]
+            )
+            chunks_without_fts = int(
+                conn.execute(
+                    "SELECT COUNT(*) FROM chunks WHERE id NOT IN (SELECT rowid FROM chunks_fts)"
+                ).fetchone()[0]
+            )
         models = [
             str(row[0])
             for row in conn.execute(
@@ -341,6 +397,8 @@ def inspect_integrity(db_path: Path, *, vault_path: Path | None = None) -> dict[
         schema_version == _SCHEMA_VERSION
         and not orphan_vectors
         and not orphan_chunks
+        and not orphan_fts_rows
+        and not chunks_without_fts
         and not missing_on_disk
         and len(models) <= 1
         and rebuild_state not in {"in_progress", "failed"}
@@ -354,6 +412,8 @@ def inspect_integrity(db_path: Path, *, vault_path: Path | None = None) -> dict[
         "orphan_vectors": orphan_vectors,
         "orphan_chunks": orphan_chunks,
         "chunks_without_embeddings": chunks_without_embeddings,
+        "orphan_fts_rows": orphan_fts_rows,
+        "chunks_without_fts": chunks_without_fts,
         "documents_missing_on_disk": missing_on_disk,
         "embedding_models": models,
         "mixed_embedding_models": len(models) > 1,

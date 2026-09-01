@@ -28,7 +28,14 @@ def test_connect_creates_a_private_projection_directory_database_and_wal_sidecar
     with dbmod.connect(db_path) as conn:
         conn.execute("CREATE TABLE private_data (value TEXT NOT NULL)")
         conn.execute("INSERT INTO private_data VALUES ('sensitive')")
-        sidecars = [path for path in (db_path.with_name("llmwiki.sqlite-wal"), db_path.with_name("llmwiki.sqlite-shm")) if path.exists()]
+        sidecars = [
+            path
+            for path in (
+                db_path.with_name("llmwiki.sqlite-wal"),
+                db_path.with_name("llmwiki.sqlite-shm"),
+            )
+            if path.exists()
+        ]
 
         assert stat.S_IMODE(db_path.parent.stat().st_mode) == 0o700
         assert stat.S_IMODE(db_path.stat().st_mode) == 0o600
@@ -132,7 +139,7 @@ def test_init_schema_upgrades_real_legacy_v1_fixture(tmp_path: Path) -> None:
             "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'projection_meta'"
         ).fetchone()
 
-    assert version == "5"
+    assert version == "6"
     assert chunk_count >= 1
     assert projection_meta is not None
 
@@ -154,7 +161,7 @@ def test_init_schema_upgrades_real_legacy_v2_fixture(tmp_path: Path) -> None:
             "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'projection_meta'"
         ).fetchone()
 
-    assert version == "5"
+    assert version == "6"
     assert embedding_table is not None
     assert projection_meta is not None
 
@@ -178,13 +185,13 @@ def test_init_schema_runs_historical_migrations_in_order_once(
         return migration
 
     monkeypatch.setattr(
-        dbmod, "_MIGRATIONS", {version: record(version) for version in (1, 2, 3, 4)}
+        dbmod, "_MIGRATIONS", {version: record(version) for version in (1, 2, 3, 4, 5)}
     )
     with dbmod.connect(db_path) as conn:
         dbmod.init_schema(conn)
         dbmod.init_schema(conn)
 
-    assert calls == [1, 2, 3, 4]
+    assert calls == [1, 2, 3, 4, 5]
 
 
 def test_failed_historical_migration_rolls_back_prior_schema_and_version(
@@ -202,8 +209,9 @@ def test_failed_historical_migration_rolls_back_prior_schema_and_version(
         raise RuntimeError("injected v2 to v3 failure")
 
     monkeypatch.setitem(dbmod._MIGRATIONS, 2, fail_after_ddl)
-    with dbmod.connect(db_path) as conn, pytest.raises(
-        RuntimeError, match="injected v2 to v3 failure"
+    with (
+        dbmod.connect(db_path) as conn,
+        pytest.raises(RuntimeError, match="injected v2 to v3 failure"),
     ):
         dbmod.init_schema(conn)
 
@@ -233,9 +241,7 @@ def test_init_schema_migrates_v3_database_to_current_version(tmp_path: Path) -> 
             "content_hash, indexed_at_ns) VALUES (?, ?, ?, ?, ?, ?, ?)",
             ("note.md", "/tmp/note.md", "Note", 1, 1, "hash", 1),
         )
-        conn.execute(
-            "UPDATE schema_meta SET value = '3' WHERE key = 'schema_version'"
-        )
+        conn.execute("UPDATE schema_meta SET value = '3' WHERE key = 'schema_version'")
 
     with dbmod.connect(db_path) as conn:
         dbmod.init_schema(conn)
@@ -247,12 +253,14 @@ def test_init_schema_migrates_v3_database_to_current_version(tmp_path: Path) -> 
             "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'projection_meta'"
         ).fetchone()
 
-    assert version == "5"
+    assert version == "6"
     assert documents == [("note.md",)]
     assert metadata_table is not None
 
 
-def test_failed_migration_rolls_back_its_ddl_and_version(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_failed_migration_rolls_back_its_ddl_and_version(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """A migration failure cannot leave a partially upgraded schema behind."""
     db_path = tmp_path / "llmwiki.sqlite"
     with dbmod.connect(db_path) as conn:
@@ -265,8 +273,9 @@ def test_failed_migration_rolls_back_its_ddl_and_version(tmp_path: Path, monkeyp
         raise RuntimeError("injected migration failure")
 
     monkeypatch.setitem(dbmod._MIGRATIONS, 3, fail_after_ddl)
-    with dbmod.connect(db_path) as conn, pytest.raises(
-        RuntimeError, match="injected migration failure"
+    with (
+        dbmod.connect(db_path) as conn,
+        pytest.raises(RuntimeError, match="injected migration failure"),
     ):
         dbmod.init_schema(conn)
 

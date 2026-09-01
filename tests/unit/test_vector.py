@@ -92,6 +92,7 @@ def _add_test_vec_table(conn, dim: int = _TEST_DIM) -> None:
 # Helpers below are used by the indexer-level tests at the bottom
 # of this file.
 
+
 def _add_document(conn, path: str) -> int:
     cur = conn.execute(
         "INSERT INTO documents (path, absolute_path, title, mtime_ns, size_bytes, "
@@ -103,6 +104,7 @@ def _add_document(conn, path: str) -> int:
 
 # All vector tests below use ``table="test_vectors"`` so they don't
 # collide with the production 384-dim schema.
+
 
 def _make_store(conn, dim: int = _TEST_DIM) -> SqliteVecStore:
     _add_test_vec_table(conn, dim=dim)
@@ -293,9 +295,7 @@ def test_indexer_reembeds_on_model_change(tmp_path: Path) -> None:
     # Manually rewrite the embedding_model column to simulate a
     # previous run under a different model.
     with dbmod.connect(db_path) as conn:
-        conn.execute(
-            "UPDATE chunk_embeddings SET embedding_model = 'other-model'"
-        )
+        conn.execute("UPDATE chunk_embeddings SET embedding_model = 'other-model'")
 
     # Touch the file mtime so the indexer re-chunks the document
     # AND triggers the rebuild-everything model-mismatch path.
@@ -476,9 +476,7 @@ def test_indexer_updates_embeddings_when_chunks_change(tmp_path: Path) -> None:
     assert s2.errors == ()
     with dbmod.connect(db_path) as conn:
         dbmod.init_schema(conn)
-        rows = conn.execute(
-            "SELECT embedding_model FROM chunk_embeddings"
-        ).fetchall()
+        rows = conn.execute("SELECT embedding_model FROM chunk_embeddings").fetchall()
         # Every row must be tagged with the configured model name.
         assert all(r[0] == settings.embedding_model for r in rows)
 
@@ -559,7 +557,5 @@ def test_indexer_force_reembed_rebuilds_every_chunk(tmp_path: Path) -> None:
     s2 = Indexer(settings, embedder=FakeEmbedder(dim=384)).run(mode="incremental")
     assert s2.embeddings_rebuilt >= 1
     with dbmod.connect(db_path) as conn:
-        rows = conn.execute(
-            "SELECT DISTINCT embedding_model FROM chunk_embeddings"
-        ).fetchall()
+        rows = conn.execute("SELECT DISTINCT embedding_model FROM chunk_embeddings").fetchall()
         assert all(r[0] == settings.embedding_model for r in rows)

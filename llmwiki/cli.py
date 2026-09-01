@@ -4,11 +4,12 @@ The CLI is intentionally small. Subcommands:
 
 - ``llmwiki index``    — run one indexing pass over a vault.
 - ``llmwiki status``   — show database state.
-- ``llmwiki search``   — (Phase 5+) search the indexed vault.
+- ``llmwiki search``   — profile-aware dense/lexical/hybrid retrieval.
+- ``llmwiki integrity`` — read-only projection diagnostics.
+- ``llmwiki eval``     — golden-set evaluation of retrieval variants.
 
-Phase 1 implements ``index`` and ``status`` only. The plugin is the
-intended long-term entry point; the CLI is for testing, scripting,
-and one-off queries.
+The plugin is the intended long-term entry point; the CLI is for
+testing, scripting, evaluation, and one-off queries.
 """
 
 from __future__ import annotations
@@ -21,10 +22,8 @@ from pathlib import Path
 import click
 
 from .config import Settings
-from .corpus import filter_candidate_ids
 from .indexer import Indexer, summarise_database
 from .logging import setup_logging
-from .recipes import format_query_embedding_input
 
 
 def _resolve_settings(
@@ -120,14 +119,10 @@ def index(
         if settings.db_path.exists():
             with dbmod.connect(settings.db_path) as conn:
                 dbmod.init_schema(conn)
-                n_chunks = int(
-                    conn.execute("SELECT COUNT(*) FROM chunks").fetchone()[0]
-                )
+                n_chunks = int(conn.execute("SELECT COUNT(*) FROM chunks").fetchone()[0])
                 # chunk_embeddings may not exist in a v2 DB; ignore errors.
                 try:
-                    n_emb = int(
-                        conn.execute("SELECT COUNT(*) FROM chunk_embeddings").fetchone()[0]
-                    )
+                    n_emb = int(conn.execute("SELECT COUNT(*) FROM chunk_embeddings").fetchone()[0])
                 except Exception:
                     n_emb = 0
                 if n_chunks > 0 and n_emb < n_chunks:
@@ -229,9 +224,6 @@ def integrity(vault: Path | None, db: Path | None, as_json: bool) -> None:
 
 
 @main.command()
-@click.option(
-    "--vault", type=click.Path(exists=True, file_okay=False, path_type=Path), default=None
-)
 @click.option("--db", type=click.Path(dir_okay=False, path_type=Path), default=None)
 @click.option("--query", required=True, help="Search query")
 @click.option("--top-k", default=10, show_default=True, type=int)
@@ -241,91 +233,256 @@ def integrity(vault: Path | None, db: Path | None, as_json: bool) -> None:
     show_default=True,
     help="Corpus profile: answer, evidence, history, all, or project:<id>",
 )
+@click.option(
+    "--mode",
+    default=None,
+    type=click.Choice(["dense", "lexical", "hybrid"]),
+    help="Retrieval channels (default: configured retrieval_mode)",
+)
+@click.option("--rerank/--no-rerank", default=None, help="Force the cross-encoder on or off")
 @click.option("--json", "as_json", is_flag=True, help="Output machine-readable JSON")
 def search(
-    vault: Path | None,
     db: Path | None,
     query: str,
     top_k: int,
     profile: str,
+    mode: str | None,
+    rerank: bool | None,
     as_json: bool,
 ) -> None:
-    """Semantic search over the indexed vault (Phase 3: vector only).
-
-    Embeds ``query`` with the configured FastEmbed model and ranks
-    the top-K most similar chunks by cosine similarity. Hybrid
-    lexical+dense fusion is Phase 5+.
-    """
+    """Profile-aware retrieval over the indexed vault (dense, lexical, or hybrid)."""
     from . import db as dbmod
-    from .embeddings import FastEmbedEmbedder
-    from .vector import SqliteVecStore
+    from .retrieval import Retriever
 
     base = Settings.from_env()
     db_path = (db or base.db_path).expanduser().resolve()
-    embedder = FastEmbedEmbedder(model_name=base.embedding_model)
+    effective_mode = mode or base.retrieval_mode
+    embedder = None
+    if effective_mode in ("dense", "hybrid"):
+        from .embeddings import FastEmbedEmbedder
+
+        embedder = FastEmbedEmbedder(model_name=base.embedding_model)
+    reranker = None
+    if rerank or (rerank is None and base.reranker_enabled):
+        from .reranker import FastEmbedReranker
+
+        reranker = FastEmbedReranker(model_name=base.reranker_model)
     with dbmod.connect(db_path) as conn:
         dbmod.init_schema(conn)
-        store = SqliteVecStore(conn)
-        if store.count() == 0:
-            click.echo(
-                f"no embeddings found in {db_path}; "
-                f"run `llmwiki index` first.",
-                err=True,
-            )
-            sys.exit(2)
-        q_vec = embedder.embed([format_query_embedding_input(query)])[0]
-        hits = store.search(q_vec, top_k=store.count())
-        allowed_ids = set(filter_candidate_ids(conn, [chunk_id for chunk_id, _ in hits], profile=profile))
-        hits = [(chunk_id, distance) for chunk_id, distance in hits if chunk_id in allowed_ids][:top_k]
-        if not hits:
-            click.echo("no results.")
-            return
-        # Hydrate chunk -> document for human-readable output.
-        ids = [cid for cid, _ in hits]
-        placeholders = ",".join("?" * len(ids))
-        rows = conn.execute(
-            f"""
-            SELECT c.id, c.document_id, c.position, c.section_name, c.text,
-                   d.path, d.title
-            FROM chunks c
-            JOIN documents d ON d.id = c.document_id
-            WHERE c.id IN ({placeholders})
-            """,
-            ids,
-        ).fetchall()
-        by_id = {int(r[0]): r for r in rows}
-        results = []
-        for cid, distance in hits:
-            row = by_id.get(cid)
-            if row is None:
-                continue
-            results.append(
-                {
-                    "chunk_id": int(row[0]),
-                    "document_id": int(row[1]),
-                    "position": int(row[2]),
-                    "section_name": str(row[3]),
-                    "text": str(row[4]),
-                    "path": str(row[5]),
-                    "title": str(row[6]),
-                    "distance": float(distance),
-                    "profile": profile,
-                }
-            )
-    if as_json:
-        click.echo(json.dumps(results, indent=2, ensure_ascii=False))
-        return
-    for r in results:
-        click.echo(
-            f"[d={r['distance']:.4f}] {r['path']}#{r['section_name'] or '(intro)'} "
-            f"(chunk {r['position']})"
+        retriever = Retriever(conn, embedder=embedder, settings=base, reranker=reranker)
+        if effective_mode != "lexical":
+            from .vector import SqliteVecStore
+
+            if SqliteVecStore(conn).count() == 0:
+                click.echo(
+                    f"no embeddings found in {db_path}; run `llmwiki index` first.", err=True
+                )
+                sys.exit(2)
+        result = retriever.retrieve(
+            query,
+            profile=profile,
+            mode=effective_mode,
+            top_k=top_k,
+            rerank=bool(reranker) if rerank is None else rerank,
         )
-        # Show first 240 chars of the chunk text.
-        snippet = str(r["text"]).strip().replace("\n", " ")
+    if as_json:
+        payload = {
+            "query": result.query,
+            "profile": result.profile,
+            "mode": result.mode,
+            "intent": result.intent,
+            "conflicts": list(result.conflicts),
+            "elapsed_ms": round(result.elapsed_ms, 2),
+            "results": [
+                {
+                    "chunk_id": c.chunk_id,
+                    "path": c.path,
+                    "title": c.title,
+                    "heading_path": list(c.heading_path),
+                    "section_name": c.section_name,
+                    "position": c.position,
+                    "text": c.text,
+                    "authority_class": c.authority_class,
+                    "authority_match": c.authority_match,
+                    "dense_rank": c.dense_rank,
+                    "dense_distance": c.dense_distance,
+                    "lexical_rank": c.lexical_rank,
+                    "bm25_score": c.bm25_score,
+                    "rrf_score": c.rrf_score,
+                    "rerank_score": c.rerank_score,
+                }
+                for c in result.candidates
+            ],
+        }
+        click.echo(json.dumps(payload, indent=2, ensure_ascii=False))
+        return
+    if not result.candidates:
+        click.echo("no results.")
+        return
+    click.echo(
+        f"mode={result.mode} profile={result.profile} intent={result.intent} "
+        f"({result.elapsed_ms:.0f} ms)"
+    )
+    for label in result.conflicts:
+        click.echo(f"conflict: {label}")
+    for c in result.candidates:
+        metrics = []
+        if c.dense_distance is not None:
+            metrics.append(f"d={c.dense_distance:.3f}")
+        if c.bm25_score is not None:
+            metrics.append(f"bm25={c.bm25_score:.2f}")
+        if c.rrf_score is not None:
+            metrics.append(f"rrf={c.rrf_score:.4f}")
+        if c.rerank_score is not None:
+            metrics.append(f"rr={c.rerank_score:.2f}")
+        flag = "*" if c.authority_match else " "
+        click.echo(
+            f"[{' '.join(metrics)}]{flag} {c.path}#{c.section_name or '(intro)'} "
+            f"(chunk {c.position}, {c.authority_class})"
+        )
+        snippet = c.text.strip().replace("\n", " ")
         if len(snippet) > 240:
             snippet = snippet[:237] + "..."
         click.echo(f"    {snippet}")
         click.echo("")
+
+
+@main.group()
+def eval() -> None:
+    """Golden-set evaluation of retrieval variants."""
+
+
+@eval.command("validate")
+@click.option(
+    "--set",
+    "golden_path",
+    required=True,
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+)
+@click.option(
+    "--vault", type=click.Path(exists=True, file_okay=False, path_type=Path), default=None
+)
+def eval_validate(golden_path: Path, vault: Path | None) -> None:
+    """Validate a golden question set (schema, paths, headings, stratification)."""
+    from .evaluation.golden import load_golden, stratification_report, validate_golden
+
+    settings = _resolve_settings(vault=vault, db=None, watch=False, require_vault=True)
+    golden = load_golden(golden_path)
+    problems = validate_golden(golden, vault=settings.vault_path) + stratification_report(golden)
+    click.echo(f"questions: {len(golden.questions)}")
+    for category, counts in golden.counts().items():
+        click.echo(f"  {category}: dev={counts['dev']} heldout={counts['heldout']}")
+    for problem in problems:
+        click.echo(f"problem: {problem}", err=True)
+    if problems:
+        raise click.ClickException(f"{len(problems)} problem(s) found")
+    click.echo("ok")
+
+
+@eval.command("run")
+@click.option(
+    "--set",
+    "golden_path",
+    required=True,
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+)
+@click.option(
+    "--vault", type=click.Path(exists=True, file_okay=False, path_type=Path), default=None
+)
+@click.option("--db", type=click.Path(dir_okay=False, path_type=Path), default=None)
+@click.option(
+    "--variant",
+    "variants",
+    multiple=True,
+    type=click.Choice(["dense", "lexical", "hybrid", "hybrid+rerank"]),
+    default=("dense",),
+    show_default=True,
+)
+@click.option(
+    "--split", type=click.Choice(["dev", "heldout", "all"]), default="heldout", show_default=True
+)
+@click.option("--top-k", default=10, show_default=True, type=int)
+@click.option(
+    "--out",
+    "out_dir",
+    type=click.Path(file_okay=False, path_type=Path),
+    default=Path("evals/runs"),
+    show_default=True,
+)
+@click.option("--no-outcomes", is_flag=True, help="Omit per-question outcomes from the record")
+def eval_run(
+    golden_path: Path,
+    vault: Path | None,
+    db: Path | None,
+    variants: tuple[str, ...],
+    split: str,
+    top_k: int,
+    out_dir: Path,
+    no_outcomes: bool,
+) -> None:
+    """Run one or more retrieval variants over a golden set and record the results."""
+    from . import db as dbmod
+    from .evaluation.golden import load_golden, validate_golden
+    from .evaluation.runner import format_comparison, run_variant, write_run
+    from .retrieval import Retriever
+
+    settings = _resolve_settings(vault=vault, db=db, watch=False, require_vault=True)
+    golden = load_golden(golden_path)
+    problems = validate_golden(golden, vault=settings.vault_path)
+    if problems:
+        raise click.ClickException(f"golden set invalid: {problems[0]} (+{len(problems) - 1} more)")
+    needs_dense = any(v != "lexical" for v in variants)
+    embedder = None
+    if needs_dense:
+        from .embeddings import FastEmbedEmbedder
+
+        embedder = FastEmbedEmbedder(model_name=settings.embedding_model)
+    reranker = None
+    if any(v == "hybrid+rerank" for v in variants):
+        from .reranker import FastEmbedReranker
+
+        reranker = FastEmbedReranker(model_name=settings.reranker_model)
+    snapshot = {
+        "embedding_model": settings.embedding_model,
+        "reranker_model": settings.reranker_model if reranker else None,
+        "retrieval_top_k_dense": settings.retrieval_top_k_dense,
+        "retrieval_top_k_lexical": settings.retrieval_top_k_lexical,
+        "rrf_k": settings.rrf_k,
+        "max_chunks_per_document": settings.max_chunks_per_document,
+        "rerank_candidates": settings.rerank_candidates,
+    }
+    records = []
+    with dbmod.connect(settings.db_path) as conn:
+        dbmod.init_schema(conn)
+        retriever = Retriever(conn, embedder=embedder, settings=settings, reranker=reranker)
+        for variant in variants:
+            record = run_variant(
+                golden,
+                variant=variant,
+                split=None if split == "all" else split,
+                retriever=retriever,
+                conn=conn,
+                settings_snapshot=snapshot,
+                vault=settings.vault_path,
+                top_k=top_k,
+                include_outcomes=not no_outcomes,
+            )
+            path = write_run(record, out_dir)
+            click.echo(f"wrote {path}", err=True)
+            records.append(record.to_dict())
+    click.echo(format_comparison(records))
+
+
+@eval.command("compare")
+@click.argument(
+    "runs", nargs=-1, required=True, type=click.Path(exists=True, dir_okay=False, path_type=Path)
+)
+@click.option("--category", default=None, help="Show one category instead of overall")
+def eval_compare(runs: tuple[Path, ...], category: str | None) -> None:
+    """Print a comparison table for recorded evaluation runs."""
+    from .evaluation.runner import format_comparison, load_run
+
+    click.echo(format_comparison([load_run(p) for p in runs], category=category))
 
 
 if __name__ == "__main__":  # pragma: no cover

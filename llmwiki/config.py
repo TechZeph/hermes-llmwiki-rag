@@ -86,11 +86,19 @@ class Settings:
     """Dimensionality of the embedding model. Must match the actual model."""
     reranker_model: str = "BAAI/bge-reranker-base"
     """Cross-encoder reranker. Default matches the plan's recommendation."""
+    retrieval_mode: str = "hybrid"
+    """Default channel mix: ``dense``, ``lexical``, or ``hybrid``. Experiment default."""
     retrieval_top_k_dense: int = 50
     retrieval_top_k_lexical: int = 50
     retrieval_top_k_final: int = 10
     rrf_k: int = 60
-    """Reciprocal-rank-fusion constant. Standard default."""
+    """Reciprocal-rank-fusion constant. Experiment seed, not a product guarantee."""
+    max_chunks_per_document: int = 3
+    """Document diversification cap applied after fusion (0 disables)."""
+    reranker_enabled: bool = False
+    """Cross-encoder reranking ships only when the held-out gate passes."""
+    rerank_candidates: int = 30
+    """How many fused candidates the reranker scores when enabled."""
 
     @staticmethod
     def from_env() -> Settings:

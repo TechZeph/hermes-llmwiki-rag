@@ -49,7 +49,8 @@ def profile_matches(profile: str, metadata: Mapping[str, object]) -> bool:
 
     Graph expansion for linked canonical pages is intentionally not implied by
     ``project:<id>`` yet; resolved wikilinks are a later stage. This profile
-    currently scopes directly to the selected project's workspace.
+    currently scopes directly to the selected project's workspace, minus its
+    navigation index and append-only log (use ``history`` for logs).
     """
     source_kind = metadata["source_kind"]
     page_role = metadata["page_role"]
@@ -61,14 +62,46 @@ def profile_matches(profile: str, metadata: Mapping[str, object]) -> bool:
         return source_kind in {"raw", "clipping"}
     if profile == "history":
         return source_kind == "wiki" and page_role == "log"
+    if profile == "current":
+        return source_kind == "wiki" and page_role == "current-state"
     if profile == "all":
         return True
     if profile.startswith("project:"):
         wanted_project = profile.removeprefix("project:")
-        return bool(wanted_project) and source_kind == "wiki" and project_id == wanted_project
-    raise ValueError(
-        "profile must be 'answer', 'evidence', 'history', 'all', or 'project:<id>'"
-    )
+        return (
+            bool(wanted_project)
+            and source_kind == "wiki"
+            and project_id == wanted_project
+            and page_role not in {"log", "route-map"}
+        )
+    raise ValueError("profile must be 'answer', 'evidence', 'history', 'all', or 'project:<id>'")
+
+
+def profile_predicate(profile: str, *, alias: str = "d") -> tuple[str, list[object]]:
+    """Return a SQL predicate over the ``documents`` table for ``profile``.
+
+    Mirrors :func:`profile_matches` exactly so SQL-side filtering (FTS5,
+    hydration) and Python-side filtering (vector over-fetch) agree.
+    """
+    a = alias
+    if profile == "answer":
+        return f"({a}.source_kind = 'wiki' AND {a}.page_role NOT IN ('log', 'route-map'))", []
+    if profile == "evidence":
+        return f"({a}.source_kind IN ('raw', 'clipping'))", []
+    if profile == "history":
+        return f"({a}.source_kind = 'wiki' AND {a}.page_role = 'log')", []
+    if profile == "all":
+        return "(1 = 1)", []
+    if profile.startswith("project:"):
+        wanted = profile.removeprefix("project:")
+        if not wanted:
+            raise ValueError("project profile requires an id: project:<id>")
+        return (
+            f"({a}.source_kind = 'wiki' AND {a}.project_id = ? "
+            f"AND {a}.page_role NOT IN ('log', 'route-map'))",
+            [wanted],
+        )
+    raise ValueError("profile must be 'answer', 'evidence', 'history', 'all', or 'project:<id>'")
 
 
 def filter_candidate_ids(
@@ -99,7 +132,8 @@ def filter_candidate_ids(
     return [
         chunk_id
         for chunk_id in candidate_ids
-        if (metadata := metadata_by_id.get(chunk_id)) is not None and profile_matches(profile, metadata)
+        if (metadata := metadata_by_id.get(chunk_id)) is not None
+        and profile_matches(profile, metadata)
     ]
 
 
@@ -110,6 +144,8 @@ def _project_page_role(stem: str) -> str:
         return "decision"
     if stem == "index":
         return "route-map"
+    if stem == "log":
+        return "log"
     return "project"
 
 
@@ -128,4 +164,10 @@ def _metadata(
     }
 
 
-__all__ = ["CorpusMetadata", "classify_path", "filter_candidate_ids", "profile_matches"]
+__all__ = [
+    "CorpusMetadata",
+    "classify_path",
+    "filter_candidate_ids",
+    "profile_matches",
+    "profile_predicate",
+]

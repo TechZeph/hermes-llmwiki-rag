@@ -98,9 +98,7 @@ def iter_vault_files(vault: Path, settings: Settings) -> Iterator[VaultFile]:
         # In-place prune of operational and symlinked directories so ``os.walk``
         # cannot traverse a vault boundary through a link.
         dirs[:] = sorted(
-            d
-            for d in dirs
-            if d not in settings.ignored_dirs and not (Path(root) / d).is_symlink()
+            d for d in dirs if d not in settings.ignored_dirs and not (Path(root) / d).is_symlink()
         )
         for name in sorted(files):
             if not name.endswith(".md"):
@@ -377,7 +375,9 @@ class Indexer:
             # regardless of whether the chunk text changed.
             reembed_all = False
             if vector_store is not None:
-                reembed_all = _needs_full_reembed(conn, expected_model=self.settings.embedding_model)
+                reembed_all = _needs_full_reembed(
+                    conn, expected_model=self.settings.embedding_model
+                )
                 if vector_store.count() > 0:
                     reembed_all = reembed_all or not dbmod.projection_metadata_matches(
                         conn, recipe_state
@@ -484,7 +484,11 @@ class Indexer:
                 embeddings_rebuilt,
                 errors,
             )
-            if vector_store is not None and not errors and vector_store.count() == count_chunks(conn):
+            if (
+                vector_store is not None
+                and not errors
+                and vector_store.count() == count_chunks(conn)
+            ):
                 dbmod.set_projection_metadata(conn, recipe_state)
             if mode == "full":
                 dbmod.set_rebuild_state(conn, "ready" if not errors else "failed")
@@ -660,6 +664,8 @@ def _backfill_missing_embeddings(
             store=store,
             model=model,
         )
+
+
 def _embed_chunks_batched(
     conn: sqlite3.Connection,
     *,
@@ -809,9 +815,7 @@ def summarise_database(db_path: Path) -> dict[str, object]:
         chunks = int(conn.execute("SELECT COUNT(*) FROM chunks").fetchone()[0])
         runs = int(conn.execute("SELECT COUNT(*) FROM index_runs").fetchone()[0])
         try:
-            embeddings = int(
-                conn.execute("SELECT COUNT(*) FROM chunk_embeddings").fetchone()[0]
-            )
+            embeddings = int(conn.execute("SELECT COUNT(*) FROM chunk_embeddings").fetchone()[0])
         except sqlite3.OperationalError:
             # Pre-Phase-3 database without the embeddings table.
             embeddings = 0

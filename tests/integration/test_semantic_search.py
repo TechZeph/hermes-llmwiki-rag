@@ -90,12 +90,10 @@ def _make_vault(root: Path) -> None:
         "There are many varieties of apples including Granny Smith.\n"
     )
     (root / "oranges.md").write_text(
-        "# Oranges\n\n"
-        "Oranges are citrus fruits. They are rich in vitamin C.\n"
+        "# Oranges\n\nOranges are citrus fruits. They are rich in vitamin C.\n"
     )
     (root / "cars.md").write_text(
-        "# Cars\n\n"
-        "Cars are motor vehicles with four wheels and an engine.\n"
+        "# Cars\n\nCars are motor vehicles with four wheels and an engine.\n"
     )
 
 
@@ -265,7 +263,9 @@ def test_indexer_rejects_embedder_dimension_that_cannot_fit_vector_schema(tmp_pa
     vault.mkdir()
     (vault / "note.md").write_text("# Note\n\napple body\n", encoding="utf-8")
 
-    with pytest.raises(ValueError, match="embedder dimension does not match configured vector schema"):
+    with pytest.raises(
+        ValueError, match="embedder dimension does not match configured vector schema"
+    ):
         Indexer(
             Settings(vault_path=vault, db_path=tmp_path / "test.sqlite"),
             embedder=KeywordEmbedder(keywords=["apple"], dim=3),

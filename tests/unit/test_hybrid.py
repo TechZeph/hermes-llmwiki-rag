@@ -1,24 +1,49 @@
-"""Unit tests for the hybrid retrieval fusion helper (Phase 5 contract)."""
+"""Unit tests for reciprocal-rank fusion and document diversification."""
 
 from __future__ import annotations
 
-from llmwiki.hybrid import reciprocal_rank_fusion
+import pytest
+
+from llmwiki.hybrid import diversify, reciprocal_rank_fusion
 
 
-def test_single_list_returns_same_ordering() -> None:
-    fused = reciprocal_rank_fusion([("a", 1.0), ("b", 0.5), ("c", 0.1)])
-    assert [doc_id for doc_id, _ in fused] == ["a", "b", "c"]
+def test_single_channel_preserves_order() -> None:
+    fused = reciprocal_rank_fusion({"dense": [1, 2, 3]})
+    assert [e.id for e in fused] == [1, 2, 3]
+    assert fused[0].ranks == {"dense": 1}
+    assert fused[0].rrf_score == pytest.approx(1 / 61)
 
 
-def test_two_lists_merge_with_rrf() -> None:
-    dense = [("a", 0.9), ("b", 0.7), ("c", 0.5)]
-    lexical = [("b", 0.95), ("a", 0.6), ("d", 0.4)]
-    fused = reciprocal_rank_fusion(dense, lexical)
-    # Both 'a' and 'b' appear in both lists, so they should outrank 'c' and 'd'.
-    top_two = {doc_id for doc_id, _ in fused[:2]}
-    assert top_two == {"a", "b"}
+def test_ids_in_both_channels_outrank_single_channel_ids() -> None:
+    fused = reciprocal_rank_fusion({"dense": [1, 2, 3], "lexical": [2, 1, 4]})
+    assert {e.id for e in fused[:2]} == {1, 2}
+    assert fused[0].ranks == {"dense": 1, "lexical": 2}
 
 
-def test_disjoint_lists_concatenate() -> None:
-    fused = reciprocal_rank_fusion([("a", 1.0)], [("b", 1.0)])
-    assert {doc_id for doc_id, _ in fused} == {"a", "b"}
+def test_ties_break_by_best_rank_then_id() -> None:
+    fused = reciprocal_rank_fusion({"dense": [5], "lexical": [3]})
+    assert [e.id for e in fused] == [3, 5]
+
+
+def test_duplicate_id_within_one_channel_counts_once() -> None:
+    fused = reciprocal_rank_fusion({"dense": [1, 1, 2]})
+    assert [e.id for e in fused] == [1, 2]
+    assert fused[0].rrf_score == pytest.approx(1 / 61)
+
+
+def test_rrf_k_changes_relative_weight_of_ranks() -> None:
+    low_k = reciprocal_rank_fusion({"a": [1, 2], "b": [2]}, k=0)
+    high_k = reciprocal_rank_fusion({"a": [1, 2], "b": [2]}, k=1000)
+    assert [e.id for e in low_k] == [1, 2] or [e.id for e in low_k] == [2, 1]
+    assert [e.id for e in high_k] == [2, 1]
+
+
+def test_negative_k_rejected() -> None:
+    with pytest.raises(ValueError):
+        reciprocal_rank_fusion({"a": [1]}, k=-1)
+
+
+def test_diversify_caps_per_group_and_keeps_order() -> None:
+    groups = {1: 10, 2: 10, 3: 10, 4: 20, 5: 10}
+    assert diversify([1, 2, 3, 4, 5], groups, max_per_group=2) == [1, 2, 4]
+    assert diversify([1, 2, 3, 4, 5], groups, max_per_group=0) == [1, 2, 3, 4, 5]

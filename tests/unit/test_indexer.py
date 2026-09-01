@@ -189,7 +189,9 @@ def test_missing_vault_path_raises(tmp_path: Path) -> None:
         Indexer(settings).run()
 
 
-def test_resolve_contained_rejects_symlinks_even_when_target_is_inside_vault(tmp_path: Path) -> None:
+def test_resolve_contained_rejects_symlinks_even_when_target_is_inside_vault(
+    tmp_path: Path,
+) -> None:
     vault = tmp_path / "vault"
     vault.mkdir()
     target = vault / "target.md"
@@ -234,11 +236,16 @@ def test_indexer_persists_path_derived_corpus_metadata(tmp_path: Path) -> None:
             "FROM documents ORDER BY path"
         ).fetchall()
 
-    assert [(path, kind, role, project_id, route_map) for path, kind, role, project_id, _, route_map in rows] == [
+    assert [
+        (path, kind, role, project_id, route_map)
+        for path, kind, role, project_id, _, route_map in rows
+    ] == [
         ("Clippings/ideas/rough-note.md", "clipping", "idea", None, 0),
         ("raw/papers/evidence.md", "raw", "evidence", None, 0),
         ("wiki/current-topic.md", "wiki", "durable", None, 0),
         ("wiki/log.md", "wiki", "log", None, 0),
         ("wiki/projects/hosp-core/current-state.md", "wiki", "current-state", "hosp-core", 0),
     ]
-    assert all(isinstance(updated_at_ns, int) and updated_at_ns > 0 for *_, updated_at_ns, _ in rows)
+    assert all(
+        isinstance(updated_at_ns, int) and updated_at_ns > 0 for *_, updated_at_ns, _ in rows
+    )

@@ -95,9 +95,7 @@ def delete_chunks_for_document(conn: sqlite3.Connection, document_id: int) -> li
     if the document had no chunks). Callers use these ids to drop
     the matching rows from :class:`SqliteVecStore`.
     """
-    rows = conn.execute(
-        "SELECT id FROM chunks WHERE document_id = ?", (document_id,)
-    ).fetchall()
+    rows = conn.execute("SELECT id FROM chunks WHERE document_id = ?", (document_id,)).fetchall()
     ids = [int(r[0]) for r in rows]
     if ids:
         conn.execute("DELETE FROM chunks WHERE document_id = ?", (document_id,))
