@@ -28,7 +28,7 @@ jobs:
           ruff check llmwiki hermes_plugin tests
           ruff format --check llmwiki hermes_plugin tests
           mypy llmwiki hermes_plugin
-      - name: Tests (no network: FastEmbed is never loaded by the suite)
+      - name: "Tests (no network: FastEmbed is never loaded by the suite)"
         run: pytest -q -p no:cacheprovider
 
   windows:
