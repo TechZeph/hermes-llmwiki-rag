@@ -19,10 +19,10 @@ provides_hooks:
 python_dependencies:
   - "hermes-llmwiki-rag>=0.1,<0.2"
 hermes:
-  # Declared compatibility range. Tested: 0.20.6 (source 2026.8.27) locally;
-  # CI runs plugin doctor on the lower bound tag and on main.
-  min_version: "0.20.6"
-  tested: ["0.20.6"]
+  # Manifest v2 and the plugin doctor API both require Hermes 0.21.0+.
+  # CI runs doctor against v2026.8.31 (0.21.0) and main.
+  min_version: "0.21.0"
+  tested: ["0.21.0"]
   api_version: 1
 config_schema:
   vault:

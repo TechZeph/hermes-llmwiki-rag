@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -153,16 +154,17 @@ def test_init_interactive_menu_creates_starter_vault(
 ) -> None:
     import shutil
 
-    monkeypatch.setenv("HOME", str(isolated / "home"))
+    home = isolated / "home"
+    monkeypatch.setattr(Path, "home", lambda: home)
     monkeypatch.setattr(shutil, "which", lambda name: None)  # no Obsidian prompt
-    (isolated / "home").mkdir()
+    home.mkdir()
     runner = CliRunner()
     # No vaults found -> options: 1 enter a path, 2 create starter. Choose 2, decline indexing.
     result = runner.invoke(main, ["init", "--interactive"], input="2\nn\n")
     assert result.exit_code == 0, result.output
     assert "Looking for Obsidian vaults" in result.output
     assert "created starter vault" in result.output and "skipped indexing" in result.output
-    created = (isolated / "home" / "llmwiki-vault").resolve()
+    created = (home / "llmwiki-vault").resolve()
     assert looks_like_vault(created) and load_user_config()["vault"] == str(created)
     # Now a vault exists under home -> it is listed first and chosen by default.
     result = runner.invoke(main, ["init", "--interactive", "--no-index"], input="\n")
@@ -209,6 +211,9 @@ def test_init_starter_mentions_obsidian(isolated: Path, monkeypatch: pytest.Monk
     assert "Obsidian is optional" in result.output and "obsidian.md/download" in result.output
 
 
+@pytest.mark.skipif(
+    os.name == "nt", reason="install.sh is POSIX-only; install.ps1 is tested in Windows CI"
+)
 def test_install_script_dry_run(tmp_path: Path) -> None:
     import os
     import subprocess

@@ -297,17 +297,11 @@ def test_indexer_reembeds_on_model_change(tmp_path: Path) -> None:
     with dbmod.connect(db_path) as conn:
         conn.execute("UPDATE chunk_embeddings SET embedding_model = 'other-model'")
 
-    # Touch the file mtime so the indexer re-chunks the document
-    # AND triggers the rebuild-everything model-mismatch path.
-    import os
-
-    stat = note.stat()
-    os.utime(note, ns=(stat.st_atime_ns + 1, stat.st_mtime_ns + 1))
-
-    # Second run with the new model: should rebuild every chunk.
+    # A model mismatch must rebuild every chunk even when source files did not change.
     indexer2 = Indexer(settings, embedder=FakeEmbedder(dim=384))
     s2 = indexer2.run(mode="incremental")
-    assert s2.documents_updated == 1
+    assert s2.documents_updated == 0
+    assert s2.documents_skipped == 1
     assert s2.embeddings_rebuilt >= 1
     # And nothing should be "built" because every chunk was already
     # in the database (no chunks added or updated by content change).

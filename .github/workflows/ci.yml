@@ -87,7 +87,7 @@ jobs:
       matrix:
         # Lower and upper bounds of the declared compatibility range. Update
         # hermes_plugin/plugin.yaml when this list changes.
-        hermes_ref: ["v2026.6.19", "main"]
+        hermes_ref: ["v2026.8.31", "main"]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
