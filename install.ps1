@@ -17,8 +17,8 @@ $InstallDir = if ($env:LLMWIKI_INSTALL_DIR) { $env:LLMWIKI_INSTALL_DIR } else { 
 $Python = if ($env:PYTHON) { $env:PYTHON } else { "python" }
 $ScriptDir = if ($PSScriptRoot) { $PSScriptRoot } else { (Get-Location).Path }
 if ($env:LLMWIKI_PACKAGE) { $PackageArgs = @($env:LLMWIKI_PACKAGE); $Source = "explicit" }
-elseif ((Test-Path (Join-Path $ScriptDir "pyproject.toml")) -and (Select-String -Quiet -Path (Join-Path $ScriptDir "pyproject.toml") -Pattern 'name = "hermes-llmwiki-rag"')) { $PackageArgs = @("-e", "$ScriptDir[mcp]"); $Source = "checkout ($ScriptDir)" }
-else { $PackageArgs = @("hermes-llmwiki-rag[mcp]"); $Source = "PyPI" }
+elseif ((Test-Path (Join-Path $ScriptDir "pyproject.toml")) -and (Select-String -Quiet -Path (Join-Path $ScriptDir "pyproject.toml") -Pattern 'name = "llmwiki-rag"')) { $PackageArgs = @("-e", "$ScriptDir[mcp]"); $Source = "checkout ($ScriptDir)" }
+else { $PackageArgs = @("llmwiki-rag[mcp]"); $Source = "PyPI" }
 
 function Say($m) { Write-Host "==> $m" }
 function Run { param([string[]]$Cmd) if ($DryRun) { Write-Host "    would run: $($Cmd -join ' ')" } else { & $Cmd[0] $Cmd[1..($Cmd.Length-1)]; if ($LASTEXITCODE -ne 0) { throw "command failed: $($Cmd -join ' ')" } } }

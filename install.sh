@@ -10,7 +10,7 @@
 # Environment: LLMWIKI_INSTALL_DIR (default ~/.local/share/llmwiki/venv),
 #              LLMWIKI_BIN_DIR (default ~/.local/bin), PYTHON (default python3),
 #              HERMES_HOME (default ~/.hermes), LLMWIKI_PACKAGE (default: this
-#              checkout if run from one, else "hermes-llmwiki-rag[mcp]" from PyPI).
+#              checkout if run from one, else "llmwiki-rag[mcp]" from PyPI).
 set -euo pipefail
 
 INSTALL_DIR="${LLMWIKI_INSTALL_DIR:-$HOME/.local/share/llmwiki/venv}"
@@ -38,10 +38,10 @@ run() { if [ "$DRY_RUN" = 1 ]; then printf '    would run: %s\n' "$*"; else "$@"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" 2>/dev/null && pwd || pwd)"
 if [ -n "${LLMWIKI_PACKAGE:-}" ]; then
   PACKAGE_ARGS=("$LLMWIKI_PACKAGE"); SOURCE_MODE="explicit"
-elif [ -f "$SCRIPT_DIR/pyproject.toml" ] && grep -q 'name = "hermes-llmwiki-rag"' "$SCRIPT_DIR/pyproject.toml"; then
+elif [ -f "$SCRIPT_DIR/pyproject.toml" ] && grep -q 'name = "llmwiki-rag"' "$SCRIPT_DIR/pyproject.toml"; then
   PACKAGE_ARGS=(-e "$SCRIPT_DIR[mcp]"); SOURCE_MODE="checkout ($SCRIPT_DIR)"
 else
-  PACKAGE_ARGS=("hermes-llmwiki-rag[mcp]"); SOURCE_MODE="PyPI"
+  PACKAGE_ARGS=("llmwiki-rag[mcp]"); SOURCE_MODE="PyPI"
 fi
 
 # --- python check --------------------------------------------------------------

@@ -34,7 +34,7 @@ def test_check_falls_back_to_github_releases_when_pypi_is_unavailable() -> None:
             raise OSError("offline mirror")
         return {
             "tag_name": "v0.2.0",
-            "html_url": "https://github.com/TechZeph/hermes-llmwiki-rag/releases/tag/v0.2.0",
+            "html_url": "https://github.com/TechZeph/llmwiki-rag/releases/tag/v0.2.0",
         }
 
     status = check_for_update(current_version="0.1.0", fetch_json=fetch_json)

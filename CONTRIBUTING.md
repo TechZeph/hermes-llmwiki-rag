@@ -4,7 +4,7 @@ Thanks for improving llmwiki. User documentation and development documentation l
 
 ## Ways to contribute
 
-- Report a bug or propose a feature through [GitHub Issues](https://github.com/TechZeph/hermes-llmwiki-rag/issues).
+- Report a bug or propose a feature through [GitHub Issues](https://github.com/TechZeph/llmwiki-rag/issues).
 - Improve installation, platform support, retrieval quality, tests, or documentation.
 - Fork the repository to build a custom retriever, host adapter, embedding backend, or user interface.
 - Report security problems privately using the process in
@@ -15,8 +15,8 @@ Thanks for improving llmwiki. User documentation and development documentation l
 Requirements: Python 3.11 or newer and SQLite with FTS5.
 
 ```bash
-git clone https://github.com/TechZeph/hermes-llmwiki-rag.git
-cd hermes-llmwiki-rag
+git clone https://github.com/TechZeph/llmwiki-rag.git
+cd llmwiki-rag
 python -m venv .venv
 .venv/bin/python -m pip install -e ".[dev]"
 ```

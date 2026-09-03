@@ -38,8 +38,8 @@ Requirements: Python 3.11 or newer and SQLite with FTS5.
 ### CLI and MCP
 
 ```bash
-git clone https://github.com/TechZeph/hermes-llmwiki-rag.git
-cd hermes-llmwiki-rag
+git clone https://github.com/TechZeph/llmwiki-rag.git
+cd llmwiki-rag
 ./install.sh
 ```
 
@@ -50,8 +50,8 @@ The installer creates an isolated environment under
 ### Hermes plugin
 
 ```bash
-git clone https://github.com/TechZeph/hermes-llmwiki-rag.git
-cd hermes-llmwiki-rag
+git clone https://github.com/TechZeph/llmwiki-rag.git
+cd llmwiki-rag
 ./install.sh --hermes
 hermes gateway restart
 ```

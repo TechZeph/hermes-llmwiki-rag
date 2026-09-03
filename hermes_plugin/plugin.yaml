@@ -6,7 +6,7 @@ description: "Local-first, authority-aware retrieval over an Obsidian LLM wiki: 
 author: "Zeph (TechZeph)"
 kind: backend
 license: MIT
-homepage: https://github.com/TechZeph/hermes-llmwiki-rag
+homepage: https://github.com/TechZeph/llmwiki-rag
 tags: [rag, obsidian, wiki, retrieval, local-first]
 provides_tools:
   - llmwiki_search
@@ -17,7 +17,7 @@ provides_hooks:
   - pre_llm_call
   - on_session_start
 python_dependencies:
-  - "hermes-llmwiki-rag>=0.1,<0.2"
+  - "llmwiki-rag>=0.1,<0.2"
 hermes:
   # Manifest v2 and the plugin doctor API both require Hermes 0.21.0+.
   # CI runs doctor against v2026.8.31 (0.21.0) and main.

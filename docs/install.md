@@ -18,8 +18,8 @@ it understands Obsidian wikilinks and vault structure.
 ## Linux and macOS
 
 ```bash
-git clone https://github.com/TechZeph/hermes-llmwiki-rag.git
-cd hermes-llmwiki-rag
+git clone https://github.com/TechZeph/llmwiki-rag.git
+cd llmwiki-rag
 ./install.sh
 ```
 
@@ -52,8 +52,8 @@ Native Windows supports the CLI and MCP server. Hermes uses the Linux installer
 inside WSL.
 
 ```powershell
-git clone https://github.com/TechZeph/hermes-llmwiki-rag.git
-cd hermes-llmwiki-rag
+git clone https://github.com/TechZeph/llmwiki-rag.git
+cd llmwiki-rag
 .\install.ps1
 ```
 
@@ -128,8 +128,8 @@ The server exposes `llmwiki_search`, `llmwiki_status`, `llmwiki_reindex`, and
 Install Hermes first, then run:
 
 ```bash
-git clone https://github.com/TechZeph/hermes-llmwiki-rag.git
-cd hermes-llmwiki-rag
+git clone https://github.com/TechZeph/llmwiki-rag.git
+cd llmwiki-rag
 ./install.sh --hermes
 hermes gateway restart
 ```
