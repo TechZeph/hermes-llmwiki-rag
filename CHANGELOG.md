@@ -3,6 +3,14 @@
 All notable changes to this project are documented here. The format follows
 Keep a Changelog; versions follow Semantic Versioning.
 
+## [Unreleased]
+
+### Changed
+
+- The Hermes in-host vault watcher is enabled by default. It incrementally
+  reindexes vault changes after the first session starts; set `watch: false` in
+  the plugin settings to opt out.
+
 ## [0.1.0] — 2026-09-01
 
 First release candidate of the local-first, authority-aware wiki RAG and

@@ -61,7 +61,7 @@ class ServiceConfig:
     auto_inject_profile: str = "answer"
     auto_inject_deadline_ms: int = 1500
     auto_inject_budget_tokens: int = 800
-    watch: bool = False
+    watch: bool = True
     watch_debounce_s: int = 2
     update_check: bool = True
     update_check_timeout_s: int = 2
@@ -100,7 +100,7 @@ class ServiceConfig:
             auto_inject_profile=_str("auto_inject_profile", "answer"),
             auto_inject_deadline_ms=_int("auto_inject_deadline_ms", 1500, 100, 2000),
             auto_inject_budget_tokens=_int("auto_inject_budget_tokens", 800, 100, 4000),
-            watch=_bool("watch", False),
+            watch=_bool("watch", True),
             watch_debounce_s=_int("watch_debounce_s", 2, 1, 600),
             update_check=_bool("update_check", True),
             update_check_timeout_s=_int("update_check_timeout_s", 2, 1, 10),

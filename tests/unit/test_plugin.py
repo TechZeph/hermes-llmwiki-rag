@@ -114,6 +114,18 @@ def test_build_settings_validates(tmp_path: Path) -> None:
     assert settings.retrieval_top_k_final == 4 and settings.retrieval_mode == "hybrid"
 
 
+def test_hermes_watcher_is_enabled_by_default() -> None:
+    assert PluginConfig(vault="/vault").watch is True
+    assert PluginConfig.from_getter(lambda _key, default: default).watch is True
+
+
+def test_plugin_manifest_declares_watcher_enabled_by_default() -> None:
+    import yaml
+
+    manifest = yaml.safe_load((Path(hermes_plugin.__file__).parent / "plugin.yaml").read_text())
+    assert manifest["config_schema"]["watch"]["default"] is True
+
+
 def test_search_tool_returns_bounded_cited_payload(vault_and_db) -> None:
     vault, db = vault_and_db
     handlers = hermes_plugin.tools.make_handlers(_runtime(vault, db, max_results=3))
@@ -285,7 +297,7 @@ def test_watcher_refuses_cold_start_and_starts_on_warm_projection(
     assert state is not None and state["state"] == "refused" and "llmwiki index" in state["reason"]
     assert cold.status()["watcher"]["state"] == "refused"
     # Disabled: nothing starts.
-    off = _runtime(vault, db)
+    off = _runtime(vault, db, watch=False)
     assert off.ensure_watcher() is None and off.status()["watcher"]["state"] == "disabled"
     # Warm: starts, performs the startup run, reacts to a change, stops on close.
     assert cold_start_check(off.settings) == ""

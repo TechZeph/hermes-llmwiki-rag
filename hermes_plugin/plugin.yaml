@@ -82,7 +82,7 @@ config_schema:
     description: "Estimated-token budget for automatically injected context."
   watch:
     type: bool
-    default: false
+    default: true
     description: "Keep the projection fresh from inside the gateway: starts a supervised vault watcher on the first session (refuses a cold start; run `llmwiki index` once first)."
   watch_debounce_s:
     type: int

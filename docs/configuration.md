@@ -49,7 +49,7 @@ MCP server flags.
 | `allow_reindex` | true | permit incremental reindex via tool |
 | `allow_full_rebuild` | false | permit `mode=full` (also needs `confirm=true`) |
 | `stale_after_hours` | 24 | status flags the projection stale after this |
-| `watch` / `watch_debounce_s` | false / 2 | in-host vault watcher (refuses a cold start) |
+| `watch` / `watch_debounce_s` | true / 2 | in-host vault watcher (refuses a cold start) |
 | `update_check` / `update_check_timeout_s` | true / 2 | once per MCP/Hermes launch, check PyPI then GitHub Releases; advisory only, 1–10 s timeout per source |
 | `auto_inject` | false | opt-in `pre_llm_call` injection (needs a safety-certified gate) |
 | `auto_inject_profile` | `answer` | fallback profile for automatic retrieval |
