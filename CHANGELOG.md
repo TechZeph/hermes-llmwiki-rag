@@ -19,6 +19,9 @@ First public alpha release of llmwiki.
   evaluation, benchmarking, and diagnostics.
 - MCP server and Hermes plugin exposing `llmwiki_search`, `llmwiki_status`,
   `llmwiki_reindex`, and `llmwiki_related`.
+- Bundled `llmwiki:using-llmwiki` Hermes skill with retrieval-profile guidance,
+  citation handling, related-page exploration, freshness checks, and safe
+  reindex policy.
 - Resolved wikilink graph, project-profile expansion, page mentions, and
   deterministic communities.
 - Default-on, debounced Hermes watcher with read-only event filtering.
