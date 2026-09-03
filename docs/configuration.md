@@ -50,6 +50,7 @@ MCP server flags.
 | `allow_full_rebuild` | false | permit `mode=full` (also needs `confirm=true`) |
 | `stale_after_hours` | 24 | status flags the projection stale after this |
 | `watch` / `watch_debounce_s` | false / 2 | in-host vault watcher (refuses a cold start) |
+| `update_check` / `update_check_timeout_s` | true / 2 | once per MCP/Hermes launch, check PyPI then GitHub Releases; advisory only, 1–10 s timeout per source |
 | `auto_inject` | false | opt-in `pre_llm_call` injection (needs a safety-certified gate) |
 | `auto_inject_profile` | `answer` | fallback profile for automatic retrieval |
 | `auto_inject_deadline_ms` | 1500 | internal deadline; timeout injects nothing (max 2000) |
@@ -65,8 +66,13 @@ plugins:
       settings:
         vault: /home/you/Workspace/vaults/clanker-vault
         watch: true
+        update_check: true
         max_results: 6
 ```
+
+Update checks never install or modify the environment. Their result appears as
+`update_check` in `llmwiki_status`; disable network checks with
+`update_check: false`.
 
 ## Corpus profiles
 

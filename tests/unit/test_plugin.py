@@ -10,6 +10,7 @@ import pytest
 
 import hermes_plugin
 from hermes_plugin.runtime import ConfigError, PluginConfig, PluginRuntime, build_settings
+from hermes_plugin.tools import make_handlers
 from llmwiki.confidence import InjectionGate
 from llmwiki.config import Settings
 from llmwiki.indexer import Indexer
@@ -194,6 +195,26 @@ def test_pre_llm_call_is_off_by_default_and_fails_open(vault_and_db) -> None:
     on = _runtime(vault, db, auto_inject=True)
     assert on.auto_inject("what is the current status of sqlite-vec?") is None
     assert on.status()["recent_injection_decisions"][-1]["reason"] == "no-calibrated-gate"
+
+
+def test_session_start_launches_watcher_and_advisory_update_check() -> None:
+    class Runtime:
+        def __init__(self) -> None:
+            self.watcher_starts = 0
+            self.update_check_starts = 0
+
+        def ensure_watcher(self) -> None:
+            self.watcher_starts += 1
+
+        def start_update_check(self) -> None:
+            self.update_check_starts += 1
+
+    runtime = Runtime()
+    handlers = make_handlers(runtime)  # type: ignore[arg-type]
+
+    assert handlers.on_session_start(session_id="s") is None
+    assert runtime.watcher_starts == 1
+    assert runtime.update_check_starts == 1
 
 
 def test_pre_llm_call_injects_only_with_gate_and_route(vault_and_db, tmp_path: Path) -> None:

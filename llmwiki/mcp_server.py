@@ -137,6 +137,7 @@ def build_server(
 def serve_stdio(config: ServiceConfig) -> None:
     """Run the server over stdio until the client disconnects."""
     server = build_server(config)
+    server.llmwiki_service.start_update_check()
     server.llmwiki_service.ensure_watcher()
     try:
         server.run(transport="stdio")

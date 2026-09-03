@@ -117,7 +117,9 @@ Codex, and other MCP hosts use the same shape):
 ```
 
 Run `llmwiki index` once before starting the server; `--watch` refuses a
-cold start on purpose.
+cold start on purpose. Each MCP-server launch also performs one non-blocking,
+advisory update check: PyPI first, then GitHub Releases if PyPI is unavailable.
+It never installs an update; inspect `llmwiki_status` for the result.
 
 ## Hermes plugin
 
@@ -132,7 +134,9 @@ hermes gateway restart          # running sessions load plugins at start
 The plugin falls back to the vault saved by `llmwiki init`. To pin one
 explicitly: `hermes config set plugins.entries.llmwiki.settings.vault /path/to/vault`,
 or in a session `/llmwiki setup /path/to/vault`. `/llmwiki status|reindex|doctor`
-are available too.
+are available too. On the first Hermes session after gateway launch, it starts
+the same non-blocking, advisory PyPI-then-GitHub update check; its result is in
+`llmwiki_status`. Set `update_check: false` in the plugin settings to disable it.
 
 Or from GitHub once published: `hermes plugins install TechZeph/hermes-llmwiki-rag/hermes_plugin`.
 

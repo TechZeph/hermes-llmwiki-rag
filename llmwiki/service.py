@@ -22,6 +22,7 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
+from . import __version__
 from . import db as dbmod
 from .citations import build_context
 from .confidence import Decision, InjectionGate, decide, load_gate
@@ -32,6 +33,7 @@ from .models import RetrievalResult
 from .reranker import Reranker
 from .retrieval import VALID_MODES, Retriever, context_for
 from .routing import route_query
+from .update_check import UpdateChecker
 from .watch import VaultWatcher
 
 logger = logging.getLogger("llmwiki.service")
@@ -61,6 +63,8 @@ class ServiceConfig:
     auto_inject_budget_tokens: int = 800
     watch: bool = False
     watch_debounce_s: int = 2
+    update_check: bool = True
+    update_check_timeout_s: int = 2
 
     @staticmethod
     def from_getter(get: Callable[[str, Any], Any]) -> ServiceConfig:
@@ -98,6 +102,8 @@ class ServiceConfig:
             auto_inject_budget_tokens=_int("auto_inject_budget_tokens", 800, 100, 4000),
             watch=_bool("watch", False),
             watch_debounce_s=_int("watch_debounce_s", 2, 1, 600),
+            update_check=_bool("update_check", True),
+            update_check_timeout_s=_int("update_check_timeout_s", 2, 1, 10),
         )
 
 
@@ -181,6 +187,7 @@ class WikiService:
         embedder_factory: Callable[[Settings], Embedder] | None = None,
         reranker_factory: Callable[[Settings], Reranker] | None = None,
         gate_path: Path | None = None,
+        update_checker: UpdateChecker | None = None,
     ) -> None:
         self.config = config
         self._settings: Settings | None = None
@@ -205,6 +212,13 @@ class WikiService:
         self._gate: InjectionGate | None = load_gate(self._gate_path)
         self._watcher: VaultWatcher | None = None
         self._watcher_lock = threading.Lock()
+        self._update_checker = (update_checker if config.update_check else None) or (
+            UpdateChecker(
+                current_version=__version__, timeout_s=float(config.update_check_timeout_s)
+            )
+            if config.update_check
+            else None
+        )
         self._schema_ready = False
 
     # --- lifecycle ------------------------------------------------------------
@@ -237,6 +251,15 @@ class WikiService:
         if watcher is not None:
             watcher.stop()
         self._pool.shutdown(wait=False, cancel_futures=True)
+
+    def start_update_check(self) -> bool:
+        """Launch the one-shot advisory release check without blocking the host."""
+        return self._update_checker.start() if self._update_checker is not None else False
+
+    def update_check_status(self) -> dict[str, str]:
+        if self._update_checker is None:
+            return {"state": "disabled", "current_version": __version__}
+        return self._update_checker.status()
 
     # --- watcher ----------------------------------------------------------------
 
@@ -401,6 +424,7 @@ class WikiService:
             return {
                 "configured": False,
                 "error": self._config_error,
+                "update_check": self.update_check_status(),
                 "remediation": "run `llmwiki init` on this machine, or: hermes config set plugins.entries.llmwiki.settings.vault /path/to/vault",
             }
         settings = self.settings
@@ -495,6 +519,7 @@ class WikiService:
             "stale": stale,
             "reindex_job": job,
             "watcher": self.watcher_state(),
+            "update_check": self.update_check_status(),
             "recent_injection_decisions": list(self._decisions)[-5:],
             "remediation": remediation,
         }

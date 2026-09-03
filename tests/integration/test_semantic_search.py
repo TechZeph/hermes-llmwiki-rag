@@ -81,6 +81,15 @@ class RecordingEmbedder(KeywordEmbedder):
         return super().embed(texts)
 
 
+class FailingRecordingEmbedder(RecordingEmbedder):
+    """Fails when a changed embedding input carries the test sentinel."""
+
+    def embed(self, texts: Sequence[str]) -> list[list[float]]:
+        if any("FAIL_EMBED" in text for text in texts):
+            raise RuntimeError("injected embedding failure")
+        return super().embed(texts)
+
+
 def _make_vault(root: Path) -> None:
     """Three markdown files about distinct topics."""
     (root / "apples.md").write_text(
@@ -188,6 +197,192 @@ def test_indexed_run_is_incremental(tmp_path: Path) -> None:
     assert s2.documents_skipped == 1
     assert s2.embeddings_built == 0
     assert s2.embeddings_rebuilt == 0
+
+
+def test_changed_document_reuses_vectors_for_byte_identical_embedding_inputs(
+    tmp_path: Path,
+) -> None:
+    """An edit re-embeds only the structurally changed chunk, not its siblings."""
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    note = vault / "note.md"
+    note.write_text(
+        "# Note\n\n"
+        "## First\n\n"
+        "apple unchanged\n\n"
+        "## Second\n\n"
+        "orange original\n\n"
+        "## Third\n\n"
+        "pear unchanged\n",
+        encoding="utf-8",
+    )
+    db_path = tmp_path / "test.sqlite"
+    embedder = RecordingEmbedder(keywords=["apple", "orange", "pear"])
+    settings = Settings(vault_path=vault, db_path=db_path)
+
+    Indexer(settings, embedder=embedder).run()
+    with dbmod.connect(db_path) as conn:
+        before = dict(conn.execute("SELECT section_name, id FROM chunks").fetchall())
+
+    embedder.calls.clear()
+    note.write_text(
+        "# Note\n\n"
+        "## First\n\n"
+        "apple unchanged\n\n"
+        "## Second\n\n"
+        "orange changed\n\n"
+        "## Third\n\n"
+        "pear unchanged\n",
+        encoding="utf-8",
+    )
+    stats = Indexer(settings, embedder=embedder).run()
+
+    assert stats.embeddings_built == 1
+    assert embedder.calls == [("Title: Note\nHeading: Note > Second\n\norange changed",)]
+    with dbmod.connect(db_path) as conn:
+        after = dict(conn.execute("SELECT section_name, id FROM chunks").fetchall())
+        assert after["First"] == before["First"]
+        assert after["Third"] == before["Third"]
+        store = SqliteVecStore(conn)
+        assert store.count() == 3
+        for query, expected_section in (
+            ("apple", "First"),
+            ("orange", "Second"),
+            ("pear", "Third"),
+        ):
+            hit = store.search(embedder.embed([query])[0], top_k=1)
+            section = conn.execute(
+                "SELECT section_name FROM chunks WHERE id = ?", (hit[0][0],)
+            ).fetchone()
+            assert section == (expected_section,)
+
+
+def test_metadata_change_reembeds_every_affected_structural_input(tmp_path: Path) -> None:
+    """Changing aliases invalidates every chunk because aliases are embedded input."""
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    note = vault / "note.md"
+    note.write_text(
+        "---\n"
+        "aliases: [Old note]\n"
+        "---\n\n"
+        "# Note\n\n"
+        "## First\n\n"
+        "apple body\n\n"
+        "## Second\n\n"
+        "orange body\n",
+        encoding="utf-8",
+    )
+    db_path = tmp_path / "test.sqlite"
+    embedder = RecordingEmbedder(keywords=["apple", "orange"])
+    settings = Settings(vault_path=vault, db_path=db_path)
+
+    Indexer(settings, embedder=embedder).run()
+    embedder.calls.clear()
+    note.write_text(
+        "---\n"
+        "aliases: [Renamed note]\n"
+        "---\n\n"
+        "# Note\n\n"
+        "## First\n\n"
+        "apple body\n\n"
+        "## Second\n\n"
+        "orange body\n",
+        encoding="utf-8",
+    )
+
+    stats = Indexer(settings, embedder=embedder).run()
+
+    assert stats.embeddings_built == 2
+    assert embedder.calls == [
+        (
+            "Title: Note\nHeading: Note > First\nAliases: Renamed note\n\napple body",
+            "Title: Note\nHeading: Note > Second\nAliases: Renamed note\n\norange body",
+        )
+    ]
+
+
+def test_inserted_preceding_chunk_keeps_later_vector_ids(tmp_path: Path) -> None:
+    """Position shifts do not invalidate later byte-identical embedding inputs."""
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    note = vault / "note.md"
+    note.write_text(
+        "# Note\n\n## First\n\napple body\n\n## Second\n\norange body\n", encoding="utf-8"
+    )
+    db_path = tmp_path / "test.sqlite"
+    embedder = RecordingEmbedder(keywords=["apple", "orange", "pear"])
+    settings = Settings(vault_path=vault, db_path=db_path)
+
+    Indexer(settings, embedder=embedder).run()
+    with dbmod.connect(db_path) as conn:
+        before = dict(conn.execute("SELECT section_name, id FROM chunks").fetchall())
+
+    embedder.calls.clear()
+    note.write_text(
+        "# Note\n\n## Intro\n\npear body\n\n## First\n\napple body\n\n## Second\n\norange body\n",
+        encoding="utf-8",
+    )
+    stats = Indexer(settings, embedder=embedder).run()
+
+    assert stats.embeddings_built == 1
+    with dbmod.connect(db_path) as conn:
+        rows = conn.execute(
+            "SELECT section_name, id, position FROM chunks ORDER BY position"
+        ).fetchall()
+        assert [(row[0], row[2]) for row in rows] == [("Intro", 0), ("First", 1), ("Second", 2)]
+        ids = {str(row[0]): int(row[1]) for row in rows}
+        assert ids["First"] == before["First"]
+        assert ids["Second"] == before["Second"]
+        assert SqliteVecStore(conn).count() == 3
+
+
+def test_partial_reuse_update_rolls_back_when_changed_chunk_embedding_fails(tmp_path: Path) -> None:
+    """A failed changed chunk leaves retained siblings and all prior rows untouched."""
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    note = vault / "note.md"
+    note.write_text(
+        "# Note\n\n## Retained\n\napple unchanged\n\n## Changed\n\norange original\n",
+        encoding="utf-8",
+    )
+    db_path = tmp_path / "test.sqlite"
+    embedder = FailingRecordingEmbedder(keywords=["apple", "orange"])
+    settings = Settings(vault_path=vault, db_path=db_path)
+
+    Indexer(settings, embedder=embedder).run()
+    with dbmod.connect(db_path) as conn:
+        before_document = conn.execute(
+            "SELECT content_hash FROM documents WHERE path = 'note.md'"
+        ).fetchone()
+        before_chunks = conn.execute(
+            "SELECT id, section_name, text FROM chunks ORDER BY id"
+        ).fetchall()
+        before_vectors = conn.execute(
+            "SELECT chunk_id FROM chunk_embeddings ORDER BY chunk_id"
+        ).fetchall()
+
+    note.write_text(
+        "# Note\n\n## Retained\n\napple unchanged\n\n## Changed\n\nFAIL_EMBED orange changed\n",
+        encoding="utf-8",
+    )
+    stats = Indexer(settings, embedder=embedder).run()
+
+    assert len(stats.errors) == 1
+    with dbmod.connect(db_path) as conn:
+        assert (
+            conn.execute("SELECT content_hash FROM documents WHERE path = 'note.md'").fetchone()
+            == before_document
+        )
+        assert (
+            conn.execute("SELECT id, section_name, text FROM chunks ORDER BY id").fetchall()
+            == before_chunks
+        )
+        assert (
+            conn.execute("SELECT chunk_id FROM chunk_embeddings ORDER BY chunk_id").fetchall()
+            == before_vectors
+        )
+        assert dbmod.inspect_integrity(db_path, vault_path=vault)["orphan_vectors"] == 0
 
 
 def test_no_embed_update_removes_superseded_vectors(tmp_path: Path) -> None:
