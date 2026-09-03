@@ -5,8 +5,9 @@ versions follow Semantic Versioning.
 
 ## [Unreleased]
 
-This is the pre-release change set targeting version 0.1.0. No 0.1.0 release
-has been tagged or published yet.
+## [0.1.0] - 2026-09-03
+
+First public alpha release of llmwiki.
 
 ### Added
 

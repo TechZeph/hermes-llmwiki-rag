@@ -26,9 +26,10 @@ you can open and verify the source.
 
 ## Status
 
-The current `main` branch is a pre-release build targeting version 0.1.0. The
-indexing, search, watcher, CLI, MCP, and Hermes-plugin paths are implemented and
-verified. Automatic context injection and the optional reranker remain opt-in.
+Version 0.1.0 is the first public alpha release. The indexing, search, watcher,
+CLI, MCP, and Hermes-plugin paths are implemented and verified. Automatic
+context injection and the optional reranker remain opt-in while their release
+gates continue to be evaluated.
 
 ## Install
 
