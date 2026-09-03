@@ -103,6 +103,7 @@ class FastEmbedEmbedder(Embedder):
         model_name: str = "BAAI/bge-small-en-v1.5",
         *,
         cache_path: str | os.PathLike[str] | None = None,
+        threads: int | None = None,
     ) -> None:
         self._model_name = model_name
         self._dim: int | None = None
@@ -112,7 +113,7 @@ class FastEmbedEmbedder(Embedder):
         # list fetch is not needed for every CLI invocation.
         from fastembed import TextEmbedding
 
-        self._impl = TextEmbedding(model_name=model_name)
+        self._impl = TextEmbedding(model_name=model_name, threads=threads)
 
     @property
     def model_name(self) -> str:

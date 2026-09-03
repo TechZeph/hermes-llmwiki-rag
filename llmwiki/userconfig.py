@@ -19,7 +19,18 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Final
 
-KNOWN_KEYS: Final = ("vault", "db", "default_profile", "retrieval_mode", "embedding_model")
+KNOWN_KEYS: Final = (
+    "vault",
+    "db",
+    "default_profile",
+    "retrieval_mode",
+    "embedding_model",
+    "resource_profile",
+    "embedding_batch_size",
+    "embedding_memory_budget_mb",
+    "embedding_min_available_mb",
+    "embedding_threads",
+)
 
 
 def config_path() -> Path:

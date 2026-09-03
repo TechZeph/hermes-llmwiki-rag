@@ -119,6 +119,37 @@ def test_hermes_watcher_is_enabled_by_default() -> None:
     assert PluginConfig.from_getter(lambda _key, default: default).watch is True
 
 
+def test_resource_settings_flow_from_plugin_configuration(tmp_path: Path) -> None:
+    config = PluginConfig.from_getter(
+        lambda key, default: {
+            "vault": str(tmp_path),
+            "resource_profile": "conservative",
+            "embedding_batch_size": 12,
+            "embedding_memory_budget_mb": 512,
+            "embedding_min_available_mb": 256,
+            "embedding_threads": 2,
+        }.get(key, default)
+    )
+
+    settings = build_settings(config)
+
+    assert settings.resource_profile == "conservative"
+    assert settings.embedding_batch_size == 12
+    assert settings.embedding_memory_budget_mb == 512
+    assert settings.embedding_min_available_mb == 256
+    assert settings.embedding_threads == 2
+
+
+def test_status_reports_resource_policy(vault_and_db) -> None:
+    vault, db = vault_and_db
+    runtime = _runtime(vault, db, resource_profile="conservative")
+
+    status = runtime.status()
+
+    assert status["resources"]["batch_size"] == 8
+    assert status["resources"]["enforcement"] == "advisory"
+
+
 def test_plugin_manifest_declares_watcher_enabled_by_default() -> None:
     import yaml
 

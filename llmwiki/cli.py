@@ -17,6 +17,7 @@ from __future__ import annotations
 import json
 import os
 import sys
+from dataclasses import replace
 from pathlib import Path
 
 import click
@@ -41,12 +42,11 @@ def _resolve_settings(
         raise click.UsageError(
             "no vault configured: pass --vault, set LLMWIKI_VAULT, or run `llmwiki init`"
         )
-    return _Settings(
+    return replace(
+        base,
         vault_path=(vault or base.vault_path).expanduser().resolve(),
         db_path=(db or base.db_path).expanduser().resolve(),
         file_watch=watch or base.file_watch,
-        log_level=base.log_level,
-        log_format=base.log_format,
     )
 
 
@@ -119,6 +119,7 @@ def index(
         # Lazy import: FastEmbed is heavy and may not be installed.
         from . import db as dbmod
         from .embeddings import FastEmbedEmbedder
+        from .resources import EmbeddingBatchController
 
         click.echo(f"embedder: {settings.embedding_model}")
         # Pre-flight: warn if a cold-start backfill is likely. We
@@ -141,7 +142,16 @@ def index(
                         f"Use --no-embed to skip and embed later.",
                         err=True,
                     )
-        embedder = FastEmbedEmbedder(model_name=settings.embedding_model)
+        resources = EmbeddingBatchController(settings)
+        click.echo(
+            "resources: "
+            f"profile={settings.resource_profile} batch={resources.effective_batch_size} "
+            f"threads={resources.effective_threads} enforcement=advisory"
+        )
+        embedder = FastEmbedEmbedder(
+            model_name=settings.embedding_model,
+            threads=resources.effective_threads,
+        )
     else:
         click.echo("embeddings: disabled (--no-embed)", err=True)
     # The vector store needs a SQLite connection. We open it inside

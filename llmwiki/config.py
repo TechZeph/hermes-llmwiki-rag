@@ -29,6 +29,18 @@ def _env_int(name: str, default: int) -> int:
         raise ValueError(f"env var {name}={raw!r} is not a valid integer") from exc
 
 
+def _optional_env_int(name: str, stored: str | None) -> int | None:
+    raw = os.environ.get(name)
+    value = raw if raw not in (None, "") else stored
+    if value in (None, ""):
+        return None
+    try:
+        parsed = int(value)
+    except ValueError as exc:
+        raise ValueError(f"resource setting {name}={value!r} is not a valid integer") from exc
+    return parsed if parsed > 0 else None
+
+
 def _default_user_data_dir() -> Path:
     """Per-user data directory (XDG on POSIX, ``%LOCALAPPDATA%`` on Windows)."""
     from .sysinfo import user_data_dir
@@ -82,6 +94,17 @@ class Settings:
     """FastEmbed model name. Default matches the plan's recommendation."""
     embedding_dim: int = 384
     """Dimensionality of the embedding model. Must match the actual model."""
+    resource_profile: str = "balanced"
+    """Embedding resource preset: ``conservative``, ``balanced``, or ``performance``."""
+    embedding_batch_size: int | None = None
+    """Explicit batch override; ``None`` derives a bounded value from the resource profile."""
+    embedding_min_batch_size: int = 1
+    embedding_memory_budget_mb: int | None = None
+    """Advisory process-RSS admission cap; OS-level hard caps are external."""
+    embedding_min_available_mb: int = 1024
+    """Do not start a batch when effective available memory falls below this floor."""
+    embedding_threads: int | None = None
+    """Explicit FastEmbed/ONNX thread override; ``None`` uses the resource profile."""
     reranker_model: str = "BAAI/bge-reranker-base"
     """Cross-encoder reranker. Default matches the plan's recommendation."""
     retrieval_mode: str = "hybrid"
@@ -133,6 +156,8 @@ class Settings:
         - ``LLMWIKI_FILE_WATCH`` (default: "0")
         - ``LLMWIKI_LOG_LEVEL``  (default: "INFO")
         - ``LLMWIKI_LOG_FORMAT`` (default: "text")
+        - ``LLMWIKI_RESOURCE_PROFILE`` (default: "balanced")
+        - ``LLMWIKI_EMBEDDING_BATCH_SIZE`` / ``LLMWIKI_EMBEDDING_MEMORY_BUDGET_MB``
         """
         from .userconfig import load_user_config
 
@@ -154,6 +179,22 @@ class Settings:
             retrieval_mode=user.get("retrieval_mode", "hybrid") or "hybrid",
             embedding_model=user.get("embedding_model", "BAAI/bge-small-en-v1.5")
             or "BAAI/bge-small-en-v1.5",
+            resource_profile=_env(
+                "LLMWIKI_RESOURCE_PROFILE", user.get("resource_profile", "balanced")
+            ),
+            embedding_batch_size=_optional_env_int(
+                "LLMWIKI_EMBEDDING_BATCH_SIZE", user.get("embedding_batch_size")
+            ),
+            embedding_memory_budget_mb=_optional_env_int(
+                "LLMWIKI_EMBEDDING_MEMORY_BUDGET_MB", user.get("embedding_memory_budget_mb")
+            ),
+            embedding_min_available_mb=_env_int(
+                "LLMWIKI_EMBEDDING_MIN_AVAILABLE_MB",
+                int(user.get("embedding_min_available_mb", "1024")),
+            ),
+            embedding_threads=_optional_env_int(
+                "LLMWIKI_EMBEDDING_THREADS", user.get("embedding_threads")
+            ),
         )
 
     @property

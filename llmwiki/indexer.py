@@ -43,6 +43,7 @@ from .recipes import (
     embedding_recipe_state,
     format_document_embedding_input,
 )
+from .resources import EmbeddingBatchController
 from .vector import SqliteVecStore, VectorStore
 
 logger = get_logger("indexer")
@@ -320,6 +321,7 @@ class Indexer:
         self.settings = settings
         self.embedder = embedder
         self.vector_store = vector_store
+        self._batch_controller = EmbeddingBatchController(settings)
 
     def run(self, *, mode: str = "incremental") -> IndexRunStats:
         """Run one indexing pass.
@@ -409,6 +411,7 @@ class Indexer:
                     embedder=self.embedder,
                     store=vector_store,
                     model=self.settings.embedding_model,
+                    controller=self._batch_controller,
                     force=reembed_all,
                 )
                 if backfill_n:
@@ -480,6 +483,7 @@ class Indexer:
                                 embedder=self.embedder,
                                 store=vector_store,
                                 model=self.settings.embedding_model,
+                                controller=self._batch_controller,
                             )
 
                     if prev is None:
@@ -747,31 +751,23 @@ def _embed_chunks(
     embedder: Embedder,
     store: VectorStore,
     model: str,
+    controller: EmbeddingBatchController,
 ) -> int:
     """Embed the chunks identified by ``chunk_ids`` and persist to ``store``.
 
-    Loads chunk text by id from the database (the indexer only holds
-    ``Chunk`` objects in scope via the chunker, not their row ids),
-    embeds in one batch, and upserts into the vector store. Returns
-    the number of embeddings written.
+    Delegates to the same bounded batch path as missing-vector backfill, so
+    one large changed Markdown document cannot bypass resource guardrails.
     """
     if not chunk_ids:
         return 0
-    placeholders = ",".join("?" * len(chunk_ids))
-    rows = conn.execute(
-        f"""
-        SELECT c.id, c.text, c.heading_path_json, d.title, d.aliases_json, d.tags_json
-        FROM chunks c
-        JOIN documents d ON d.id = c.document_id
-        WHERE c.id IN ({placeholders})
-        ORDER BY c.id
-        """,
-        list(chunk_ids),
-    ).fetchall()
-    ids_ordered, texts = _document_embedding_inputs(rows)
-    vectors = embedder.embed(texts)
-    store.upsert(ids_ordered, vectors, embedding_model=model)
-    return len(ids_ordered)
+    return _embed_chunks_batched(
+        conn,
+        chunk_ids=chunk_ids,
+        embedder=embedder,
+        store=store,
+        model=model,
+        controller=controller,
+    )
 
 
 def _backfill_missing_embeddings(
@@ -780,6 +776,7 @@ def _backfill_missing_embeddings(
     embedder: Embedder,
     store: VectorStore,
     model: str,
+    controller: EmbeddingBatchController,
     force: bool = False,
 ) -> int:
     """Embed every chunk that does not yet have a vector row.
@@ -812,6 +809,7 @@ def _backfill_missing_embeddings(
                 embedder=embedder,
                 store=store,
                 model=model,
+                controller=controller,
             )
 
     else:
@@ -835,6 +833,7 @@ def _backfill_missing_embeddings(
             embedder=embedder,
             store=store,
             model=model,
+            controller=controller,
         )
 
 
@@ -845,22 +844,26 @@ def _embed_chunks_batched(
     embedder: Embedder,
     store: VectorStore,
     model: str,
-    batch_size: int = 128,
+    controller: EmbeddingBatchController,
 ) -> int:
     """Embed ``chunk_ids`` in batches and persist to ``store``.
 
-    Both the SQL text fetch and the FastEmbed call are streamed
-    per-batch to bound peak memory on large vaults. The default
-    batch size of 128 was tuned against the 384-dim BGE-small
-    model on a 60 GB / 16-core box; peak RSS stayed under 3 GB
-    even on multi-thousand-chunk backfills.
+    Both the SQL text fetch and the FastEmbed call are streamed per-batch to
+    bound peak memory. The shared controller admits each batch and can lower
+    later batch sizes after a material RSS increase.
     """
     if not chunk_ids:
         return 0
     total = 0
     n = len(chunk_ids)
-    logger.info("backfill: embedding %d chunks in batches of %d", n, batch_size)
-    for start in range(0, n, batch_size):
+    logger.info(
+        "backfill: embedding %d chunks in batches of at most %d",
+        n,
+        controller.effective_batch_size,
+    )
+    start = 0
+    while start < n:
+        batch_size = controller.next_batch_size(n - start)
         batch_ids = chunk_ids[start : start + batch_size]
         placeholders = ",".join("?" * len(batch_ids))
         rows = conn.execute(
@@ -877,6 +880,8 @@ def _embed_chunks_batched(
         vectors = embedder.embed(texts)
         store.upsert(ids_ordered, vectors, embedding_model=model)
         total += len(ids_ordered)
+        controller.record_batch_complete()
+        start += len(batch_ids)
         # Log every batch for a clear progress signal during the
         # initial backfill; quiet later.
         logger.info("backfill progress: %d/%d", total, n)

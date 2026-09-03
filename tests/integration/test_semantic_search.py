@@ -90,6 +90,26 @@ class FailingRecordingEmbedder(RecordingEmbedder):
         return super().embed(texts)
 
 
+def test_indexer_applies_configured_batch_limit_to_new_document_chunks(tmp_path: Path) -> None:
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    (vault / "sections.md").write_text(
+        "# Sections\n\nalpha\n\n## Two\n\nbeta\n\n## Three\n\ngamma\n",
+        encoding="utf-8",
+    )
+    embedder = RecordingEmbedder(["alpha", "beta", "gamma"])
+    settings = Settings(
+        vault_path=vault,
+        db_path=tmp_path / "test.sqlite",
+        embedding_batch_size=1,
+    )
+
+    stats = Indexer(settings, embedder=embedder).run()
+
+    assert stats.embeddings_built >= 3
+    assert embedder.calls and all(len(call) <= 1 for call in embedder.calls)
+
+
 def _make_vault(root: Path) -> None:
     """Three markdown files about distinct topics."""
     (root / "apples.md").write_text(

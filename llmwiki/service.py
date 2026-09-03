@@ -31,6 +31,7 @@ from .embeddings import Embedder
 from .indexer import Indexer
 from .models import RetrievalResult
 from .reranker import Reranker
+from .resources import EmbeddingBatchController
 from .retrieval import VALID_MODES, Retriever, context_for
 from .routing import route_query
 from .update_check import UpdateChecker
@@ -63,6 +64,11 @@ class ServiceConfig:
     auto_inject_budget_tokens: int = 800
     watch: bool = True
     watch_debounce_s: int = 2
+    resource_profile: str = "balanced"
+    embedding_batch_size: int | None = None
+    embedding_memory_budget_mb: int | None = None
+    embedding_min_available_mb: int = 1024
+    embedding_threads: int | None = None
     update_check: bool = True
     update_check_timeout_s: int = 2
 
@@ -80,6 +86,16 @@ class ServiceConfig:
             if isinstance(value, str):
                 return value.strip().lower() in ("1", "true", "yes", "on")
             return bool(value)
+
+        def _optional_int(key: str, default: int | None, lo: int, hi: int) -> int | None:
+            value = get(key, default)
+            if value is None or value == "":
+                return None
+            try:
+                parsed = int(value)
+            except (TypeError, ValueError):
+                return default
+            return max(lo, min(hi, parsed)) if parsed > 0 else None
 
         def _str(key: str, default: str) -> str:
             value = get(key, default)
@@ -102,6 +118,13 @@ class ServiceConfig:
             auto_inject_budget_tokens=_int("auto_inject_budget_tokens", 800, 100, 4000),
             watch=_bool("watch", True),
             watch_debounce_s=_int("watch_debounce_s", 2, 1, 600),
+            resource_profile=_str("resource_profile", "balanced"),
+            embedding_batch_size=_optional_int("embedding_batch_size", None, 1, 128),
+            embedding_memory_budget_mb=_optional_int(
+                "embedding_memory_budget_mb", None, 64, 1024 * 1024
+            ),
+            embedding_min_available_mb=_int("embedding_min_available_mb", 1024, 128, 1024 * 1024),
+            embedding_threads=_optional_int("embedding_threads", None, 1, 64),
             update_check=_bool("update_check", True),
             update_check_timeout_s=_int("update_check_timeout_s", 2, 1, 10),
         )
@@ -146,6 +169,11 @@ def build_settings(config: ServiceConfig) -> Settings:
         reranker_enabled=config.rerank,
         retrieval_top_k_final=config.max_results,
         context_budget_tokens=config.context_budget_tokens,
+        resource_profile=config.resource_profile,
+        embedding_batch_size=config.embedding_batch_size,
+        embedding_memory_budget_mb=config.embedding_memory_budget_mb,
+        embedding_min_available_mb=config.embedding_min_available_mb,
+        embedding_threads=config.embedding_threads,
     )
 
 
@@ -496,6 +524,7 @@ class WikiService:
             "vault": settings.vault_path.name,
             "profile_default": self.config.default_profile,
             "retrieval_mode": settings.retrieval_mode,
+            "resources": EmbeddingBatchController(settings).status(),
             "reranker_enabled": settings.reranker_enabled,
             "auto_inject": self.config.auto_inject,
             "auto_inject_gate": (
@@ -646,7 +675,10 @@ class WikiService:
 def _default_embedder(settings: Settings) -> Embedder:
     from .embeddings import FastEmbedEmbedder
 
-    return FastEmbedEmbedder(model_name=settings.embedding_model)
+    return FastEmbedEmbedder(
+        model_name=settings.embedding_model,
+        threads=EmbeddingBatchController(settings).effective_threads,
+    )
 
 
 def _default_reranker(settings: Settings) -> Reranker:

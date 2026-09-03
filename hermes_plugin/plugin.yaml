@@ -88,6 +88,23 @@ config_schema:
     type: int
     default: 2
     description: "Seconds of filesystem quiet before a watch-triggered incremental reindex."
+  resource_profile:
+    type: str
+    default: balanced
+    description: "Embedding resource preset: conservative, balanced, or performance. Explicit embedding limits override it."
+  embedding_batch_size:
+    type: int
+    description: "Optional fixed embedding batch size (1-128); unset derives from resource_profile."
+  embedding_memory_budget_mb:
+    type: int
+    description: "Optional advisory process-RSS admission ceiling in MiB; not an OS hard cap."
+  embedding_min_available_mb:
+    type: int
+    default: 1024
+    description: "Do not begin an embedding batch if effective available memory falls below this MiB floor."
+  embedding_threads:
+    type: int
+    description: "Optional FastEmbed/ONNX thread limit; unset derives from resource_profile."
   update_check:
     type: bool
     default: true
