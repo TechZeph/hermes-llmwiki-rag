@@ -1,5 +1,8 @@
 # Evaluation protocol and predeclared release gates
 
+> Contributor reference. End users do not need to run these evaluations. Start
+> with the [installation guide](install.md) to use llmwiki.
+
 This document fixes the evaluation contract and the gates that decide
 which retrieval variant ships. The gates below were written before the
 first held-out run was recorded (see the git history of this file) so
@@ -7,18 +10,17 @@ they cannot be tuned to the results.
 
 ## Public and private evaluation assets
 
-The methodology, harness, metrics, gates and every recorded decision in
-this file are public. The real-vault golden sets (`clanker-vault-v1.json`,
-`clanker-vault-v2.json`, their drafts) and the recorded run records are
-private development assets under `private/` because they quote page
-paths, section titles and questions from a personal vault. The public
-repository ships `evals/sample-vault/` and `evals/golden/sample-vault.json`
-as a runnable example of the same schema, and `docs/benchmarks.md` carries
-the aggregate tables generated from the private runs.
+The methodology, harness, metrics, gates, and recorded decisions are public.
+Reference-vault question sets and individual run records are not published
+because they contain text and paths from a personal knowledge base. The public
+repository ships `evals/sample-vault/` and `evals/golden/sample-vault.json` as a
+runnable example of the same schema. [Benchmarks](benchmarks.md) contains only
+aggregate results from the reference evaluations.
 
 ## Golden set
 
-- File: `private/evals/golden/clanker-vault-v1.json`, schema in `evals/golden/README.md`.
+- The first private reference set contains 115 questions; its schema is public
+  in `evals/golden/README.md`.
 - 115 real-vault questions across eight categories: current-state,
   decision, exact-term, concept, evidence, chronology, ambiguity,
   no-answer. Every category has a `dev` and a `heldout` split
@@ -130,18 +132,26 @@ tolerance. The single-set rule still applies when only one set is run.
 ## Commands
 
 ```bash
-# validate the set against the live vault
-.venv/bin/llmwiki eval validate --set private/evals/golden/clanker-vault-v1.json --vault ~/Workspace/vaults/clanker-vault
+# run the public sample end to end
+sample_dir="$(mktemp -d)"
+.venv/bin/llmwiki index \
+  --vault evals/sample-vault \
+  --db "$sample_dir/index.sqlite"
+.venv/bin/llmwiki eval run \
+  --set evals/golden/sample-vault.json \
+  --vault evals/sample-vault \
+  --db "$sample_dir/index.sqlite" \
+  --variant dense --variant lexical --variant hybrid \
+  --split all \
+  --out "$sample_dir/runs"
 
-# run the matrix on held-out
-.venv/bin/llmwiki eval run --set private/evals/golden/clanker-vault-v1.json \
-  --vault ~/Workspace/vaults/clanker-vault \
-  --variant dense --variant lexical --variant hybrid --variant hybrid+rerank \
-  --split heldout
-
-# compare recorded runs
-.venv/bin/llmwiki eval compare private/evals/runs/*.json
+# compare two run records produced from the same corpus fingerprint
+.venv/bin/llmwiki eval compare /path/to/run-a.json /path/to/run-b.json
 ```
+
+The compact public sample demonstrates the schema and runner. The validation
+command enforces the full release-set minimum of 60 questions, so use it for a
+release golden set rather than this 16-question sample.
 
 ## Recorded decisions
 
@@ -272,7 +282,7 @@ default; neither meets the "improves or matches" V2 rule.
 
 ### 2026-09-01 — Golden set v2 (paraphrased) and the channel mix
 
-`private/evals/golden/clanker-vault-v2.json`: 77 questions (26 held-out) phrased
+The second private reference set contains 77 questions (26 held-out) phrased
 the way a person types when they do not remember the wiki's wording:
 synonyms, casual requests, occasional typos, seven multi-part questions
 (category `ambiguity`, `multi-part` in notes). It complements v1, whose
@@ -357,3 +367,10 @@ is this gate; opt-in injection remains permitted, default-on is not.
 Coverage is lower than the v1-only gate because paraphrased questions
 have weaker structural confidence signals; growing both sets is the way
 to raise it.
+
+## Contributor links
+
+- [Contributing](../CONTRIBUTING.md)
+- [Architecture](architecture.md)
+- [Benchmarks](benchmarks.md)
+- [Documentation index](README.md)

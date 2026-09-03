@@ -1,154 +1,204 @@
-# Install
+# Install llmwiki
 
-Three ways to run llmwiki: standalone CLI, MCP server for any MCP-capable
-agent, or Hermes plugin. All three share one projection database and the
-same local models.
+llmwiki can run as a standalone command-line tool, an MCP server, or a Hermes
+plugin. All three use the same local index and embedding model.
 
 ## Requirements
 
-- Python 3.11 or newer (Hermes ships 3.11; the suite is run on 3.11 and 3.14).
-- SQLite with FTS5 (standard on Linux and macOS Python builds).
-- About 130 MB for the `BAAI/bge-small-en-v1.5` ONNX model, downloaded once
-  by FastEmbed into `~/.cache/fastembed` (override with `FASTEMBED_CACHE_PATH`).
-- Disk for the projection: roughly 3–4× the vault's Markdown size.
+- Python 3.11 or newer.
+- SQLite with FTS5, included with standard Python builds on Linux, macOS, and
+  Windows from python.org.
+- About 130 MB for the local `BAAI/bge-small-en-v1.5` model, downloaded once.
+- Disk space for the generated index, typically three to four times the size of
+  the vault's Markdown files.
 
-## One-line installer
+Obsidian is optional. llmwiki works with any folder of Markdown files, although
+it understands Obsidian wikilinks and vault structure.
+
+## Linux and macOS
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/TechZeph/hermes-llmwiki-rag/main/install.sh | bash
+git clone https://github.com/TechZeph/hermes-llmwiki-rag.git
+cd hermes-llmwiki-rag
+./install.sh
 ```
 
-`install.sh` checks for Python 3.11+ with FTS5, creates a virtualenv at
-`~/.local/share/llmwiki/venv`, installs `hermes-llmwiki-rag[mcp]` (the
-current checkout when run from one), links `~/.local/bin/llmwiki`, and runs
-`llmwiki init`. Options: `--hermes` (also install into the Hermes venv, link
-and enable the plugin), `--no-init`, `--dry-run`, and `-- <init args>`.
-Environment overrides: `LLMWIKI_INSTALL_DIR`, `LLMWIKI_BIN_DIR`, `PYTHON`,
-`LLMWIKI_PACKAGE`. It installs Python dependencies only; Obsidian is optional
-and `init` says so (and offers to open a new starter vault in it when it is
-installed).
+The installer:
+
+1. checks Python and SQLite FTS5;
+2. creates an isolated environment at `~/.local/share/llmwiki/venv`;
+3. adds `~/.local/bin/llmwiki`;
+4. runs `llmwiki init` to select a vault and build the first index.
+
+If `~/.local/bin` is not on `PATH`, the installer identifies the directory you
+need to add. Check the completed installation with:
+
+```bash
+llmwiki doctor
+```
+
+Useful installer options:
+
+```text
+./install.sh --hermes             also install and enable the Hermes plugin
+./install.sh --no-init            install without running setup
+./install.sh --dry-run            show what would change
+./install.sh -- /path/to/vault    pass a vault directly to setup
+```
 
 ## Windows
 
-Native Windows is supported for the CLI and the MCP server with Python 3.11+
-from python.org (its sqlite3 ships FTS5; sqlite-vec, onnxruntime, FastEmbed and
-watchdog publish Windows wheels):
+Native Windows supports the CLI and MCP server. Hermes uses the Linux installer
+inside WSL.
 
 ```powershell
-irm https://raw.githubusercontent.com/TechZeph/hermes-llmwiki-rag/main/install.ps1 | iex
+git clone https://github.com/TechZeph/hermes-llmwiki-rag.git
+cd hermes-llmwiki-rag
+.\install.ps1
 ```
 
-Config lives in `%APPDATA%\llmwiki\config.toml` and the projection in
-`%LOCALAPPDATA%\llmwiki\llmwiki.sqlite`. Projection file permissions are
-not enforced on Windows (a warning says so); keep the data directory in a
-user-only location. Hermes itself runs on Windows through WSL, so for the
-plugin use `install.sh --hermes` inside WSL. CI runs the test suite on
-`windows-latest`.
+Configuration is stored in `%APPDATA%\llmwiki\config.toml`; the generated index
+is stored in `%LOCALAPPDATA%\llmwiki\llmwiki.sqlite`. Windows permissions are not
+changed automatically, so keep that directory restricted to your user account.
+
+## First setup
+
+The installer normally starts setup for you. To run it again:
+
+```bash
+llmwiki init
+llmwiki init /path/to/vault
+llmwiki init --create ~/llmwiki-vault
+```
+
+`init` saves the selected vault, creates the generated index outside it, and
+runs the first index. The first run downloads the embedding model and may take
+time on a large vault. Later runs process only new, changed, or deleted pages.
+
+The default generated index is
+`$XDG_DATA_HOME/llmwiki/llmwiki.sqlite`, or
+`~/.local/share/llmwiki/llmwiki.sqlite` when `XDG_DATA_HOME` is unset. Never put
+the generated index inside the vault.
 
 ## Standalone CLI
 
-```bash
-git clone https://github.com/TechZeph/hermes-llmwiki-rag
-cd hermes-llmwiki-rag
-python -m venv .venv
-.venv/bin/python -m pip install -e ".[mcp]"        # add [dev] for tests
-
-.venv/bin/llmwiki init           # finds vaults, or creates a starter vault; saves config; first index
-.venv/bin/llmwiki doctor         # environment, config, projection and Hermes checks with next steps
-.venv/bin/llmwiki search --query "why did we choose sqlite-vec?"
-```
-
-`llmwiki init` writes `~/.config/llmwiki/config.toml` (`llmwiki config show`
-/ `llmwiki config set KEY VALUE`), so `--vault` and `LLMWIKI_VAULT` are only
-needed to override it. Non-interactive use: `llmwiki init /path/to/vault --yes`
-or `llmwiki init --create ~/llmwiki-vault --yes`.
-
-The projection is created at `$XDG_DATA_HOME/llmwiki/llmwiki.sqlite`
-(default `~/.local/share/llmwiki/llmwiki.sqlite`) with `0700`/`0600`
-permissions. Set `LLMWIKI_DB` to move it. Never put it inside the vault.
-
-First index: ~5,000 chunks take about 45 minutes on a 16-core CPU and hold
-around 5.5 GB RSS while the ONNX arena is warm; later runs touch only
-changed pages and finish in seconds.
-
-Keep it fresh:
+After setup:
 
 ```bash
-.venv/bin/llmwiki index --watch          # coalesced incremental reindex on change
+llmwiki status
+llmwiki search --query "what changed this week?" --profile history
+llmwiki related wiki/projects/example/current-state.md
 ```
 
-or a user service:
-
-```ini
-# ~/.config/systemd/user/llmwiki-watch.service
-[Unit]
-Description=llmwiki vault watcher
-[Service]
-Environment=LLMWIKI_VAULT=%h/Workspace/vaults/clanker-vault
-ExecStart=%h/Workspace/repos/hermes-llmwiki-rag/.venv/bin/llmwiki index --watch
-Restart=on-failure
-[Install]
-WantedBy=default.target
-```
+To keep a standalone process watching for vault changes:
 
 ```bash
-systemctl --user daemon-reload && systemctl --user enable --now llmwiki-watch
+llmwiki index --watch
 ```
+
+Run only one watcher for a given index. If the Hermes plugin or an MCP server is
+already watching, do not start a second standalone watcher.
 
 ## MCP server
 
+Run the stdio server after completing the first index:
+
 ```bash
-.venv/bin/llmwiki mcp --vault ~/Workspace/vaults/clanker-vault [--watch]
+llmwiki mcp --watch
 ```
 
-Serves `llmwiki_search`, `llmwiki_status`, `llmwiki_reindex` and
-`llmwiki_related` over stdio. Example client configuration (Claude Code,
-Codex, and other MCP hosts use the same shape):
+Example MCP client configuration:
 
 ```json
 {
   "mcpServers": {
     "llmwiki": {
-      "command": "/home/you/hermes-llmwiki-rag/.venv/bin/llmwiki",
-      "args": ["mcp", "--vault", "/home/you/vault"]
+      "command": "/home/you/.local/bin/llmwiki",
+      "args": ["mcp", "--watch"]
     }
   }
 }
 ```
 
-Run `llmwiki index` once before starting the server; `--watch` refuses a
-cold start on purpose. Each MCP-server launch also performs one non-blocking,
-advisory update check: PyPI first, then GitHub Releases if PyPI is unavailable.
-It never installs an update; inspect `llmwiki_status` for the result.
+The server exposes `llmwiki_search`, `llmwiki_status`, `llmwiki_reindex`, and
+`llmwiki_related`. Remove `--watch` if another process owns the watcher.
 
 ## Hermes plugin
 
+Install Hermes first, then run:
+
 ```bash
-~/.hermes/hermes-agent/venv/bin/pip install -e /path/to/hermes-llmwiki-rag
-ln -s /path/to/hermes-llmwiki-rag/hermes_plugin ~/.hermes/plugins/llmwiki
-hermes plugins enable llmwiki --no-allow-tool-override
-hermes plugins doctor /path/to/hermes-llmwiki-rag/hermes_plugin --ci
-hermes gateway restart          # running sessions load plugins at start
+git clone https://github.com/TechZeph/hermes-llmwiki-rag.git
+cd hermes-llmwiki-rag
+./install.sh --hermes
+hermes gateway restart
 ```
 
-The plugin falls back to the vault saved by `llmwiki init`. To pin one
-explicitly: `hermes config set plugins.entries.llmwiki.settings.vault /path/to/vault`,
-or in a session `/llmwiki setup /path/to/vault`. `/llmwiki status|reindex|doctor`
-are available too. On the first Hermes session after gateway launch, it starts
-the same non-blocking, advisory PyPI-then-GitHub update check; its result is in
-`llmwiki_status`. Set `update_check: false` in the plugin settings to disable it.
+The plugin uses the vault saved by `llmwiki init`. To select another vault:
 
-Or from GitHub once published: `hermes plugins install TechZeph/hermes-llmwiki-rag/hermes_plugin`.
+```bash
+hermes config set plugins.entries.llmwiki.settings.vault /path/to/vault
+hermes gateway restart
+```
 
-Settings reference: `docs/configuration.md`. Tool contract: `docs/tools.md`.
+You can also use `/llmwiki setup /path/to/vault` inside a Hermes session.
+`/llmwiki status`, `/llmwiki reindex`, and `/llmwiki doctor` are available there
+too. The in-host watcher is enabled by default after the first index; opt out
+with `watch: false` in the plugin settings.
+
+The plugin and MCP server make a non-blocking advisory update check when they
+start. They never install updates automatically. In the Hermes plugin, disable
+the network check with `update_check: false`; the MCP command does not currently
+expose an update-check switch.
+
+## Upgrade
+
+From the cloned repository:
+
+```bash
+git pull --ff-only
+./install.sh --no-init
+```
+
+For a Hermes installation:
+
+```bash
+./install.sh --hermes --no-init
+hermes gateway restart
+```
+
+Your vault and generated index are retained.
 
 ## Uninstall
 
+Disable the Hermes plugin first if it is installed:
+
 ```bash
-hermes plugins disable llmwiki && rm ~/.hermes/plugins/llmwiki
-~/.hermes/hermes-agent/venv/bin/pip uninstall hermes-llmwiki-rag
-rm -f ~/.local/share/llmwiki/llmwiki.sqlite{,-wal,-shm}      # projection
-rm -rf ~/.cache/fastembed                                     # models (optional)
+hermes plugins disable llmwiki
+rm -f ~/.hermes/plugins/llmwiki
 ```
 
-The vault is never modified by any of the above.
+Remove the standalone installation:
+
+```bash
+rm -f ~/.local/bin/llmwiki
+rm -rf ~/.local/share/llmwiki/venv
+```
+
+Optional local data cleanup:
+
+```bash
+rm -f ~/.local/share/llmwiki/llmwiki.sqlite{,-wal,-shm}
+rm -rf ~/.cache/fastembed
+```
+
+These commands do not modify the selected vault. Configuration remains at
+`~/.config/llmwiki/config.toml` unless you remove it separately.
+
+## Next steps
+
+- [Configuration](configuration.md)
+- [Commands and tools](tools.md)
+- [Security and privacy](security.md)
+- [Operations and offline use](operations.md)
+- [Documentation index](README.md)

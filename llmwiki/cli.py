@@ -94,7 +94,7 @@ def main(log_level: str | None, log_format: str | None) -> None:
 @click.option(
     "--embed/--no-embed",
     default=True,
-    help="Generate embeddings for chunks (Phase 3; default: enabled)",
+    help="Generate local embeddings for chunks (default: enabled)",
 )
 def index(
     vault: Path | None,

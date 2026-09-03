@@ -1,12 +1,17 @@
-# Configuration
+# Configure llmwiki
+
+Most users only need `llmwiki init`. It selects a vault, saves the choice, and
+builds the first index. Use this page when you need a different profile, model,
+resource limit, or host-specific setting.
 
 Configuration is layered, lowest to highest precedence: package defaults →
 user config file (`~/.config/llmwiki/config.toml`, written by `llmwiki init`
 and `llmwiki config set`; `LLMWIKI_CONFIG` or `XDG_CONFIG_HOME` relocate it) →
 `LLMWIKI_*` environment variables → host settings (Hermes plugin settings or
-MCP/CLI flags) → per-call tool arguments. The user file holds `vault`, `db`,
-`default_profile`, `retrieval_mode`, `embedding_model`. The Hermes plugin
-falls back to the file's `vault` when `settings.vault` is unset.
+MCP/CLI flags) → per-call tool arguments. `llmwiki config set` manages `vault`,
+`db`, `default_profile`, `retrieval_mode`, and `embedding_model`; resource
+settings can be supplied through the environment variables below. The Hermes
+plugin falls back to the file's `vault` when `settings.vault` is unset.
 
 ## Core settings (`llmwiki.config.Settings`)
 
@@ -18,8 +23,8 @@ falls back to the file's `vault` when `settings.vault` is unset.
 | `retrieval_mode` | `hybrid` | `dense`, `lexical`, or `hybrid` |
 | `retrieval_top_k_dense` / `_lexical` | 50 / 50 | candidates per channel |
 | `retrieval_top_k_final` | 10 | results returned |
-| `rrf_k` | 20 | RRF constant (selected on dev) |
-| `rrf_dense_weight` / `rrf_lexical_weight` | 1.0 / 1.0 | channel weights (selected jointly on v1 + v2 dev) |
+| `rrf_k` | 20 | reciprocal-rank-fusion constant selected by evaluation |
+| `rrf_dense_weight` / `rrf_lexical_weight` | 1.0 / 1.0 | evaluated channel weights |
 | `max_chunks_per_document` | 3 | document diversification cap |
 | `query_recipe` | `query-v2-bge-instruction` | query text recipe; never forces re-embeds |
 | `reranker_enabled` / `reranker_model` / `rerank_candidates` | false / `BAAI/bge-reranker-base` / 30 | opt-in cross-encoder (Gate R failed) |
@@ -28,14 +33,23 @@ falls back to the file's `vault` when `settings.vault` is unset.
 | `multiquery` | false | deterministic decomposition + fusion (experiment) |
 | `recency_boost` | false | newest-first inside the authority tier for current-state intent (experiment) |
 | `context_budget_tokens` / `context_per_document_tokens` / `context_max_excerpts` | 1500 / 600 / 8 | context builder budgets |
+| `resource_profile` | `balanced` | `conservative`, `balanced`, or `performance` embedding defaults |
+| `embedding_batch_size` | profile default | optional fixed batch size (1–128) |
+| `embedding_memory_budget_mb` | unset | optional advisory process-RSS ceiling in MiB |
+| `embedding_min_available_mb` | 1024 | pause before a batch below this available-memory floor |
+| `embedding_threads` | profile default | optional FastEmbed/ONNX thread limit |
 
-Environment variables for the CLI: `LLMWIKI_VAULT`, `LLMWIKI_DB`,
-`LLMWIKI_LOG_LEVEL`, `LLMWIKI_LOG_FORMAT`, `FASTEMBED_CACHE_PATH`.
+Environment variables for the CLI include `LLMWIKI_VAULT`, `LLMWIKI_DB`,
+`LLMWIKI_LOG_LEVEL`, `LLMWIKI_LOG_FORMAT`, `LLMWIKI_RESOURCE_PROFILE`,
+`LLMWIKI_EMBEDDING_BATCH_SIZE`, `LLMWIKI_EMBEDDING_MEMORY_BUDGET_MB`,
+`LLMWIKI_EMBEDDING_MIN_AVAILABLE_MB`, `LLMWIKI_EMBEDDING_THREADS`, and
+`FASTEMBED_CACHE_PATH`.
 
 ## Host settings (`llmwiki.service.ServiceConfig`)
 
-Used by the Hermes plugin (`plugins.entries.llmwiki.settings.*`) and the
-MCP server flags.
+Used by the Hermes plugin (`plugins.entries.llmwiki.settings.*`). The MCP command
+exposes a smaller subset as flags: vault, database, profile, result limit,
+full-rebuild permission, and watcher control.
 
 | key | default | meaning |
 |---|---|---|
@@ -50,6 +64,11 @@ MCP server flags.
 | `allow_full_rebuild` | false | permit `mode=full` (also needs `confirm=true`) |
 | `stale_after_hours` | 24 | status flags the projection stale after this |
 | `watch` / `watch_debounce_s` | true / 2 | in-host vault watcher (refuses a cold start) |
+| `resource_profile` | `balanced` | embedding resource preset |
+| `embedding_batch_size` | profile default | optional batch override (1–128) |
+| `embedding_memory_budget_mb` | unset | optional advisory process-RSS ceiling in MiB |
+| `embedding_min_available_mb` | 1024 | available-memory floor in MiB |
+| `embedding_threads` | profile default | optional FastEmbed/ONNX thread limit |
 | `update_check` / `update_check_timeout_s` | true / 2 | once per MCP/Hermes launch, check PyPI then GitHub Releases; advisory only, 1–10 s timeout per source |
 | `auto_inject` | false | opt-in `pre_llm_call` injection (needs a safety-certified gate) |
 | `auto_inject_profile` | `answer` | fallback profile for automatic retrieval |
@@ -64,7 +83,7 @@ plugins:
   entries:
     llmwiki:
       settings:
-        vault: /home/you/Workspace/vaults/clanker-vault
+        vault: /home/you/notes
         watch: true
         update_check: true
         max_results: 6
@@ -85,3 +104,22 @@ Update checks never install or modify the environment. Their result appears as
 | `all` | everything; diagnostics only |
 
 Classification is path-derived and deterministic (`llmwiki.corpus`).
+
+## Safe defaults
+
+- Keep the core setting `retrieval_mode: hybrid`, the core setting
+  `reranker_enabled: false`, and the host setting `auto_inject: false` unless
+  you are deliberately evaluating another configuration.
+- Keep `resource_profile: balanced` on a typical workstation. Use
+  `conservative` on a memory-constrained machine and `performance` only when
+  you have measured available headroom.
+- Resource settings are advisory. For a hard operating-system memory or CPU
+  limit on Linux, see [Operations](operations.md).
+- Run only one watcher against a generated index.
+
+## Next steps
+
+- [Install](install.md)
+- [Commands and tools](tools.md)
+- [Security and privacy](security.md)
+- [Documentation index](README.md)

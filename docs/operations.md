@@ -21,6 +21,28 @@ Provision before an offline deployment:
 
 FastEmbed's registry currently does not expose an immutable artifact checksum through this package interface. The stored provenance is therefore not a byte-level model attestation. Preserve the provisioned cache and record its checksum in deployment tooling when that assurance is required.
 
+## Resource controls
+
+Indexing uses the `balanced` resource profile by default. `conservative` lowers
+the embedding batch and thread count; `performance` raises them. For a standalone
+CLI indexing process, set `LLMWIKI_RESOURCE_PROFILE=conservative`; for the Hermes
+plugin, set `plugins.entries.llmwiki.settings.resource_profile` with
+`hermes config set`. The MCP command currently uses the default resource policy.
+
+llmwiki reports process RSS and available-memory headroom and can reduce batch
+size or stop before starting another batch. These checks are advisory rather
+than operating-system limits. On Linux, wrap a manual indexing process with
+`systemd-run --user --scope` when a hard cap is required, for example:
+
+```bash
+systemd-run --user --scope \
+  -p MemoryHigh=4G -p MemoryMax=5G -p CPUQuota=400% \
+  llmwiki index
+```
+
+Choose limits for your machine and vault. An interrupted run is safe to rerun;
+completed document updates remain transactional.
+
 When a model or embedding-recipe change requires a full re-embedding, `llmwiki` performs the vector replacement in one SQLite transaction. If embedding fails or the process is interrupted, the last complete vector set is retained; a successful migration may hold the projection write lock for its full duration.
 
 ## Logging and telemetry
@@ -36,3 +58,10 @@ There is no `backup` or `delete-projection` command yet. Do not copy a live SQLi
 To discard the current projection, stop all `llmwiki` processes and remove the database together with its sibling `-wal` and `-shm` files. Do not remove the vault or model cache unless that is separately intended. File removal is not a promise of forensic erasure: recovery depends on the storage device, filesystem, encryption, and retention/snapshot policy.
 
 Future backup and deletion commands must expose separate scopes for the projection, model cache, logs, and any telemetry/evaluation artifacts, and a backup must use a consistent SQLite snapshot that incorporates WAL content.
+
+## Next steps
+
+- [Install](install.md)
+- [Configuration](configuration.md)
+- [Security and privacy](security.md)
+- [Documentation index](README.md)

@@ -2,7 +2,7 @@
 .SYNOPSIS
   llmwiki installer for Windows PowerShell: virtualenv + package + first-run setup.
 .EXAMPLE
-  irm https://raw.githubusercontent.com/TechZeph/hermes-llmwiki-rag/main/install.ps1 | iex
+  .\install.ps1
   .\install.ps1 -NoInit          # from a checkout, skip `llmwiki init`
   .\install.ps1 -DryRun
 .NOTES
@@ -16,9 +16,9 @@ $ErrorActionPreference = "Stop"
 $InstallDir = if ($env:LLMWIKI_INSTALL_DIR) { $env:LLMWIKI_INSTALL_DIR } else { Join-Path $env:LOCALAPPDATA "llmwiki\venv" }
 $Python = if ($env:PYTHON) { $env:PYTHON } else { "python" }
 $ScriptDir = if ($PSScriptRoot) { $PSScriptRoot } else { (Get-Location).Path }
-if ($env:LLMWIKI_PACKAGE) { $Package = $env:LLMWIKI_PACKAGE; $Source = "explicit" }
-elseif ((Test-Path (Join-Path $ScriptDir "pyproject.toml")) -and (Select-String -Quiet -Path (Join-Path $ScriptDir "pyproject.toml") -Pattern 'name = "hermes-llmwiki-rag"')) { $Package = "-e $ScriptDir[mcp]"; $Source = "checkout ($ScriptDir)" }
-else { $Package = "hermes-llmwiki-rag[mcp]"; $Source = "PyPI" }
+if ($env:LLMWIKI_PACKAGE) { $PackageArgs = @($env:LLMWIKI_PACKAGE); $Source = "explicit" }
+elseif ((Test-Path (Join-Path $ScriptDir "pyproject.toml")) -and (Select-String -Quiet -Path (Join-Path $ScriptDir "pyproject.toml") -Pattern 'name = "hermes-llmwiki-rag"')) { $PackageArgs = @("-e", "$ScriptDir[mcp]"); $Source = "checkout ($ScriptDir)" }
+else { $PackageArgs = @("hermes-llmwiki-rag[mcp]"); $Source = "PyPI" }
 
 function Say($m) { Write-Host "==> $m" }
 function Run { param([string[]]$Cmd) if ($DryRun) { Write-Host "    would run: $($Cmd -join ' ')" } else { & $Cmd[0] $Cmd[1..($Cmd.Length-1)]; if ($LASTEXITCODE -ne 0) { throw "command failed: $($Cmd -join ' ')" } } }
@@ -35,7 +35,7 @@ Say "virtualenv: $InstallDir"
 if (-not (Test-Path (Join-Path $InstallDir "Scripts\python.exe"))) { Run @($Python, "-m", "venv", $InstallDir) }
 $VPy = Join-Path $InstallDir "Scripts\python.exe"
 Run @($VPy, "-m", "pip", "install", "--quiet", "--upgrade", "pip")
-Run (@($VPy, "-m", "pip", "install", "--quiet", "--upgrade") + ($Package -split " "))
+Run (@($VPy, "-m", "pip", "install", "--quiet", "--upgrade") + $PackageArgs)
 $Launcher = Join-Path $InstallDir "Scripts\llmwiki.exe"
 Say "launcher: $Launcher (add $(Join-Path $InstallDir 'Scripts') to PATH to run 'llmwiki' directly)"
 

@@ -54,7 +54,10 @@ llmwiki = "hermes_plugin"
 
 [project.urls]
 Homepage = "https://github.com/TechZeph/hermes-llmwiki-rag"
+Documentation = "https://github.com/TechZeph/hermes-llmwiki-rag/blob/main/docs/README.md"
+Changelog = "https://github.com/TechZeph/hermes-llmwiki-rag/blob/main/CHANGELOG.md"
 Issues = "https://github.com/TechZeph/hermes-llmwiki-rag/issues"
+Source = "https://github.com/TechZeph/hermes-llmwiki-rag"
 
 [tool.setuptools.packages.find]
 where = ["."]

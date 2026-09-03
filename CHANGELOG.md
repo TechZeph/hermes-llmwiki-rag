@@ -1,64 +1,52 @@
 # Changelog
 
-All notable changes to this project are documented here. The format follows
-Keep a Changelog; versions follow Semantic Versioning.
+All notable changes are recorded here. The format follows Keep a Changelog and
+versions follow Semantic Versioning.
 
 ## [Unreleased]
 
-### Changed
-
-- The Hermes in-host vault watcher is enabled by default. It incrementally
-  reindexes vault changes after the first session starts; set `watch: false` in
-  the plugin settings to opt out.
-
-## [0.1.0] — 2026-09-01
-
-First release candidate of the local-first, authority-aware wiki RAG and
-its Hermes plugin.
+This is the pre-release change set targeting version 0.1.0. No 0.1.0 release
+has been tagged or published yet.
 
 ### Added
 
-- Incremental Obsidian indexer with heading-aware chunks, local FastEmbed
-  embeddings (`BAAI/bge-small-en-v1.5`), sqlite-vec vectors, trigger-maintained
-  FTS5, ordered transactional migrations (schema v8), integrity diagnostics,
-  true full rebuild, restrictive projection permissions.
-- Path-derived corpus metadata and profiles: `answer`, `project:<id>`,
-  `evidence`, `history`, `all`.
-- Hybrid retrieval (dense + BM25, reciprocal-rank fusion), intent-aware
-  authority ordering with provenance conflict labels, document diversification,
-  opt-in cross-encoder reranking.
-- Citation objects and a budgeted context builder that wraps retrieved
-  Markdown as untrusted reference material, with prompt-injection fixtures.
-- Resolved wikilink graph, project-profile expansion, page-entity mention
-  edges, deterministic communities, `llmwiki_related`.
-- Hermes plugin (`llmwiki_search`, `llmwiki_status`, `llmwiki_reindex`,
-  `llmwiki_related`), an inert-by-default calibrated `pre_llm_call` hook, and
-  an opt-in in-host vault watcher.
-- MCP stdio server exposing the same tools (`llmwiki mcp`).
-- CLI: `init` (vault discovery, starter vault, persistent config, first index),
-  `doctor`, `config show|set`, `index` (with `--watch`), `search`, `status`,
-  `integrity`, `related`, `communities`, `bench`, `mcp`, and
-  `eval validate|run|compare|regress|calibrate|report`.
-- `install.sh` one-line installer (venv, package, launcher, optional Hermes
-  wiring, first-run setup); `init` detects Obsidian and offers to open a new
-  starter vault, and points to the download when it is absent.
-- Persistent user config at `~/.config/llmwiki/config.toml`; the Hermes plugin
-  falls back to it, and a `/llmwiki` slash command offers status, setup,
-  reindex and doctor inside sessions.
-- Evaluation harness with two real-vault golden sets, predeclared gates,
-  reproducible run records, regression rule, and generated benchmarks.
-- Documentation: architecture, install, configuration, tools, security,
-  operations, evaluation, benchmarks.
+- Local incremental indexing for Markdown and Obsidian vaults with
+  heading-aware chunks, local FastEmbed embeddings, sqlite-vec, and FTS5.
+- Hybrid BM25 and vector retrieval with corpus profiles, authority-aware
+  ordering, cited context, conflict labels, and document diversification.
+- CLI setup, health checks, search, indexing, related-page lookup, configuration,
+  evaluation, benchmarking, and diagnostics.
+- MCP server and Hermes plugin exposing `llmwiki_search`, `llmwiki_status`,
+  `llmwiki_reindex`, and `llmwiki_related`.
+- Resolved wikilink graph, project-profile expansion, page mentions, and
+  deterministic communities.
+- Default-on, debounced Hermes watcher with read-only event filtering.
+- Advisory update checks that never install software automatically.
+- Adaptive embedding resource profiles, bounded batching, process-memory and
+  available-memory diagnostics, and cgroup-v2 headroom reporting.
+- Linux/macOS and Windows installers, persistent user configuration, offline
+  provisioning guidance, security documentation, and a synthetic evaluation
+  example.
 
-### Measured and left off by default
+### Changed
 
-- Cross-encoder reranking (Gate R: latency and memory), automatic injection
-  (Gate A: coverage), linked-pages RRF channel, recency ordering, multi-query
-  decomposition.
+- Unchanged structural embedding inputs retain their chunk and vector IDs, so a
+  small document edit embeds only the changed chunks.
+- User documentation now separates installation and everyday use from
+  contributor, architecture, evaluation, and release-engineering material.
+- Linux/macOS and Windows installers now preserve checkout and installation
+  paths containing spaces when invoking pip.
+
+### Measured and disabled by default
+
+- Cross-encoder reranking because it exceeded latency and memory gates.
+- Automatic context injection because its held-out coverage gate did not pass.
+- Linked-pages ranking, recency ordering, and multi-query decomposition because
+  they did not improve the accepted evaluation baseline.
 
 ### Compatibility
 
-- Python 3.11 – 3.14 on Linux and macOS; Windows for the CLI and MCP server
-  (`install.ps1`, `%APPDATA%`/`%LOCALAPPDATA%` locations, no POSIX-only
-  imports; permission hardening is POSIX-only and warns elsewhere). Hermes
-  Agent 0.20.6 (source 2026.8.27) tested; on Windows Hermes runs under WSL.
+- Python 3.11–3.14 on Linux and macOS.
+- Native Windows for the CLI and MCP server; Hermes integration uses WSL.
+- Hermes Agent 0.21.0 or newer; Plugin Doctor is tested against the declared
+  lower bound and current Hermes main.

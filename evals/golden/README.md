@@ -1,5 +1,8 @@
 # Golden question sets
 
+> Contributor reference. Users do not need golden sets to install or run
+> llmwiki. See [the installation guide](../../docs/install.md) for normal use.
+
 Real-vault retrieval questions used by `llmwiki eval`. Each file is a JSON
 object: `{"corpus": "<vault name>", "version": "<set version>", "questions": [...]}`.
 

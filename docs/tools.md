@@ -1,4 +1,21 @@
-# Tool contract
+# Commands and tools
+
+Use `llmwiki search` from a terminal, or connect llmwiki to an agent through
+Hermes or MCP. The agent integrations expose the same four operations over one
+local index.
+
+## Command-line examples
+
+```bash
+llmwiki status
+llmwiki search --query "what are the current project priorities?"
+llmwiki search --query "why was SQLite selected?" --profile answer --context
+llmwiki search --query "what changed this month?" --profile history --since 2026-09-01
+llmwiki related wiki/projects/example/current-state.md
+```
+
+Run `llmwiki COMMAND --help` for every option. The structured interfaces below
+are intended for agent hosts and integrations.
 
 The same four tools are exposed by the Hermes plugin and the MCP server;
 both are adapters over `llmwiki.service.WikiService`. Every response is a
@@ -83,3 +100,10 @@ and gate refusals all return `None`. Decisions are kept in memory (last
 (validates, reconfigures the running plugin, persists
 `plugins.entries.llmwiki.settings.vault`), `/llmwiki reindex` (incremental,
 waits up to 120 s), `/llmwiki doctor` (same checks as `llmwiki doctor`).
+
+## Next steps
+
+- [Install](install.md)
+- [Configuration](configuration.md)
+- [Security and privacy](security.md)
+- [Documentation index](README.md)

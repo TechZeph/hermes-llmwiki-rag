@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 # llmwiki installer: virtualenv + package + first-run setup, optionally wired into Hermes.
 #
-#   curl -fsSL https://raw.githubusercontent.com/TechZeph/hermes-llmwiki-rag/main/install.sh | bash
 #   ./install.sh                      # from a checkout: installs this source tree (editable)
 #   ./install.sh --hermes             # also install into the Hermes venv, link + enable the plugin
 #   ./install.sh --no-init            # skip `llmwiki init`
@@ -38,11 +37,11 @@ run() { if [ "$DRY_RUN" = 1 ]; then printf '    would run: %s\n' "$*"; else "$@"
 # --- locate the package source ------------------------------------------------
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" 2>/dev/null && pwd || pwd)"
 if [ -n "${LLMWIKI_PACKAGE:-}" ]; then
-  PACKAGE="$LLMWIKI_PACKAGE"; SOURCE_MODE="explicit"
+  PACKAGE_ARGS=("$LLMWIKI_PACKAGE"); SOURCE_MODE="explicit"
 elif [ -f "$SCRIPT_DIR/pyproject.toml" ] && grep -q 'name = "hermes-llmwiki-rag"' "$SCRIPT_DIR/pyproject.toml"; then
-  PACKAGE="-e $SCRIPT_DIR[mcp]"; SOURCE_MODE="checkout ($SCRIPT_DIR)"
+  PACKAGE_ARGS=(-e "$SCRIPT_DIR[mcp]"); SOURCE_MODE="checkout ($SCRIPT_DIR)"
 else
-  PACKAGE="hermes-llmwiki-rag[mcp]"; SOURCE_MODE="PyPI"
+  PACKAGE_ARGS=("hermes-llmwiki-rag[mcp]"); SOURCE_MODE="PyPI"
 fi
 
 # --- python check --------------------------------------------------------------
@@ -67,8 +66,7 @@ if [ ! -x "$INSTALL_DIR/bin/python" ]; then
 fi
 VPY="$INSTALL_DIR/bin/python"
 run "$VPY" -m pip install --quiet --upgrade pip
-# shellcheck disable=SC2086
-run "$VPY" -m pip install --quiet --upgrade $PACKAGE
+run "$VPY" -m pip install --quiet --upgrade "${PACKAGE_ARGS[@]}"
 run mkdir -p "$BIN_DIR"
 run ln -sfn "$INSTALL_DIR/bin/llmwiki" "$BIN_DIR/llmwiki"
 case ":$PATH:" in *":$BIN_DIR:"*) ;; *) say "note: add $BIN_DIR to your PATH to run 'llmwiki' directly" ;; esac
@@ -80,8 +78,7 @@ if [ "$WITH_HERMES" = 1 ]; then
     echo "Hermes venv not found at $HPY; install Hermes first (https://hermes-agent.nousresearch.com/docs/)" >&2; exit 1
   fi
   say "Hermes: installing the package into its venv and linking the plugin"
-  # shellcheck disable=SC2086
-  run "$HPY" -m pip install --quiet --upgrade $PACKAGE
+  run "$HPY" -m pip install --quiet --upgrade "${PACKAGE_ARGS[@]}"
   PLUGIN_DIR="$("$HPY" -c 'import hermes_plugin, os; print(os.path.dirname(hermes_plugin.__file__))' 2>/dev/null || true)"
   if [ "$DRY_RUN" = 1 ] && [ -z "$PLUGIN_DIR" ]; then PLUGIN_DIR="<hermes venv>/hermes_plugin"; fi
   run mkdir -p "$HERMES_HOME/plugins"

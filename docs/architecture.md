@@ -1,108 +1,122 @@
-# Architecture and delivery contract
+# Architecture
 
-This document is the repository-facing architecture for `hermes-llmwiki-rag`. The canonical project planning is maintained in the Clanker vault under `wiki/projects/hermes-llmwiki-rag/`; this file records the contract needed to implement and review the package without depending on that private vault.
+> Contributor reference. Start with the [user documentation](README.md) if you
+> only want to install or use llmwiki.
 
-## Product boundary
+llmwiki is a host-independent indexing and retrieval engine with thin adapters
+for the command line, MCP, and Hermes Agent.
 
-- Markdown is canonical, human-readable knowledge.
-- SQLite, FTS5, sqlite-vec, graph edges, and evaluation records are rebuildable projections.
-- The package is read-only against source Markdown.
+## System boundaries
+
+- The selected Markdown vault is canonical and read-only.
+- SQLite, FTS5, sqlite-vec, graph edges, and embeddings form a disposable local
+  projection outside the vault.
 - The retrieval core does not import Hermes.
-- Hermes integration is a thin standalone plugin.
-- V1 ends at evaluated, authority-aware explicit tools. Automatic injection is opt-in V1.1.
+- The Hermes plugin and MCP server use the same `WikiService` interface.
+- Retrieved Markdown is untrusted evidence, never executable instructions.
+
+## Indexing pipeline
+
+1. Discover regular Markdown files contained within the configured vault.
+2. Parse frontmatter, headings, tags, aliases, and wikilinks.
+3. Create heading-aware structural chunks.
+4. Classify source kind, page role, project, and route-map status from the path.
+5. Generate local FastEmbed vectors and maintain FTS5 rows.
+6. Resolve wikilinks, mentions, and deterministic link communities.
+7. Commit each document's metadata, chunks, vectors, and search rows
+   transactionally.
+
+Incremental indexing hashes files and embedding inputs. Unchanged chunks keep
+their identifiers and vectors; new, changed, and deleted content updates only
+the affected projection rows. Ordered migrations and integrity checks protect
+existing projections.
+
+## Retrieval pipeline
+
+1. Validate the corpus profile and optional date filter.
+2. Retrieve dense and BM25 candidates independently.
+3. Preserve channel-specific metrics and ranks.
+4. Fuse candidates with reciprocal-rank fusion.
+5. Apply intent-aware authority ordering and document diversification.
+6. Optionally apply experimental channels when explicitly enabled.
+7. Build bounded excerpts, citations, conflict labels, and an untrusted-context
+   envelope.
+
+Vector distance, FTS5 BM25, fusion scores, and optional reranker scores remain
+separate. A fusion score is a ranking signal, not confidence.
 
 ## Corpus profiles and authority
 
-Discovery and retrieval are different concerns. Retrieval always names a profile:
+- `answer`: curated wiki pages, excluding history and route maps.
+- `project:<id>`: one project workspace plus linked curated pages.
+- `evidence`: raw sources and clippings.
+- `history`: root and project logs.
+- `all`: the complete corpus for diagnostics.
 
-- `answer`: curated wiki pages, excluding append-only history by default.
-- `project:<id>`: one project workspace plus linked canonical pages.
-- `evidence`: explicit raw/clipping source lookup.
-- `history`: explicit append-only log/history lookup.
-- `all`: diagnostics only.
-
-Persist deterministic, versioned `source_kind`, `page_role`, `project_id`, `updated_at`, and `is_route_map` metadata. Authority depends on intent: current-state pages answer current-state questions; decisions answer rationale; curated pages answer general facts; raw sources support evidence; logs answer chronology. Return conflicts with provenance rather than silently resolving them by score.
-
-## Projection integrity
-
-Use ordered transactional migrations. A document change must atomically replace its metadata, chunks, vectors, and FTS rows. Explicitly delete rows in virtual tables that cannot enforce foreign keys. Provide:
-
-- a true full rebuild;
-- an integrity checker for orphan/stale/mixed-state rows;
-- rollback and interrupted-migration tests;
-- resolved-path containment inside the configured vault.
-
-## Chunk and embedding recipes
-
-Version chunking, document embedding, and query embedding independently. The initial document recipe to evaluate is title + heading breadcrumb + selected aliases/tags + body. Keep authority metadata outside semantic text. Persist model name, FastEmbed package version, registry artifact source, actual dimension, all recipe versions, and corpus-policy version; incompatible changes require a controlled rebuild. Preserve/cache artifact checksums externally when byte-level provenance is required.
-
-A configured model is valid only when its dimension and recipe are compatible with the active vector schema. Chunk-size, overlap, code/table/list handling, and long-paragraph behaviour are selected by evaluation rather than fixed by convention.
-
-## Retrieval contract
-
-The pipeline is:
-
-1. Route query and select corpus profile.
-2. Retrieve dense and BM25 candidates independently.
-3. Preserve raw metrics and per-channel ranks in typed candidate records.
-4. Fuse candidates with RRF.
-5. Apply authority/filter policy and document diversification.
-6. Optionally rerank when held-out evidence justifies cost.
-7. Select bounded context and citations.
-
-Vector distance, FTS5 BM25, RRF, and reranker scores remain distinct. RRF is not confidence. `rrf_k` and candidate limits are experiment defaults, not permanent product decisions.
-
-## Evaluation
-
-Before BM25, create at least 60 real-vault questions stratified across current state, decisions, exact terminology, concepts, evidence, chronology, ambiguity, and no-answer cases. Keep a held-out set. Record acceptable document/section sources, authority class, and expected retrieve/abstain mode.
-
-Every evaluation run records git SHA, corpus fingerprint, model revision, recipe/config versions, Recall@K, MRR, nDCG, authority accuracy, duplicate concentration, citation fidelity, no-answer behaviour, p50/p95 latency, peak RSS, and failures. Compare vector-only, BM25-only, hybrid, and any reranker on the same held-out set. Optional stages ship only against predeclared quality and resource gates.
+Authority depends on query intent. Current-state pages lead status questions;
+decision pages lead rationale questions; logs lead chronology questions; and
+raw sources support evidence requests. Conflicts are labelled with provenance
+instead of silently resolved by score.
 
 ## Context and citations
 
-Citation objects use vault-relative paths and include title, heading breadcrumb, stable chunk identity/hash, ordinal, source role, retrieval mode, excerpt boundaries, and truncation state. Context selection enforces total/per-document token budgets, source diversification, contiguous-only merging, conflict labels, and exact provenance.
+Every result carries a vault-relative path, title, heading breadcrumb, chunk
+ordinal and hash, authority class, source kind, and channel ranks. Context
+selection enforces total and per-document budgets, document diversification,
+contiguous-only merging, and explicit truncation.
 
-All retrieved Markdown is untrusted reference data. Delimit and label it as evidence so embedded instructions cannot override host or user instructions.
+Context is wrapped in fixed delimiters and neutralised so text inside a vault
+cannot forge the envelope. Host applications must continue to treat retrieved
+content as data.
 
-## Hermes adapter
+## Host integrations
 
-V1 tools:
+`llmwiki.service.WikiService` is the shared public boundary. It powers:
 
-- `llmwiki_search`: explicit profile-aware cited retrieval.
-- `llmwiki_status`: freshness, integrity, model/recipe identity, and state.
-- `llmwiki_reindex`: controlled, scope-explicit, status-visible maintenance.
+- CLI search, status, related-page lookup, and indexing;
+- four MCP tools over stdio;
+- the Hermes plugin's four tools, slash command, watcher, and optional
+  `pre_llm_call` hook.
 
-The current Hermes `pre_llm_call` hook injects returned context into the current user message, receives sensitive conversation data, and is timeout-bounded/fail-open. V1.1 must use current-query-only input, persist no conversation history, remain visibly opt-in, and return no context on error or timeout. Plugin release requires `hermes plugins doctor --ci` and compatibility tests against a declared Hermes range.
+Automatic injection is registered but disabled by default. When enabled, it
+uses only the current query, a deterministic router, a calibrated gate, and a
+bounded deadline. Errors, timeouts, and rejected gates inject nothing.
 
-## Privacy and operations
+## Storage and privacy
 
-Document one-time model acquisition and an offline provisioning path; pin model revisions/checksums where possible. On POSIX, the projection directory is `0700` and the SQLite/WAL/SHM files are `0600`; unsupported platforms must report that they cannot verify an equivalent guarantee. Document backup/deletion behaviour because the projection contains source text, frontmatter, paths, and vectors. Do not log raw history or full retrieved content by default. Absolute paths are diagnostic-only. See [`operations.md`](operations.md) for current operational limits.
+The projection contains source text, metadata, paths, hashes, and embeddings.
+On POSIX, llmwiki creates its directory with mode `0700` and database/WAL/SHM
+files with mode `0600`. Other platforms receive a warning rather than a false
+permission guarantee.
 
-## Roadmap and release gates
+The package has no telemetry client and does not persist query text or
+conversation history. Model acquisition is the only expected network operation
+during normal setup; advisory update checks can be disabled.
 
-### Stabilization
+## Resource model
 
-- Ordered migrations, true rebuild, integrity checks, corpus profiles, authority metadata, versioned recipes, and restrictive POSIX projection permissions are implemented. A real-vault vector baseline remains.
-- Gate: zero derived-row orphans; fault-injection rollback passes; real-vault held-out evaluation and resource measurements recorded.
+Embedding work uses one bounded batch controller across initial indexing and
+changed-document updates. The `conservative`, `balanced`, and `performance`
+profiles select default batch and thread counts; explicit limits can override
+them. Process RSS, available memory, and Linux cgroup-v2 headroom are advisory
+signals. Hard limits remain the responsibility of the host operating system.
 
-### V1 retrieval
+## Evaluation contract
 
-- Add transactional FTS5/BM25, typed candidates, hybrid fusion, conditional reranking, context/citation objects, and explicit Hermes tools.
-- Gate: every retrieval variant evaluated on the same held-out set; citation resolution structurally exact; authority and latency/resource targets met; plugin doctor and integration tests pass.
+Changes to chunking, embeddings, ranking, authority policy, or context selection
+must be compared on the same held-out corpus fingerprint. Optional stages ship
+enabled only when they pass predeclared quality, authority, latency, and memory
+gates. See [Evaluation](evaluation.md) and [Benchmarks](benchmarks.md).
 
-### V1.1 automatic retrieval
+## Extension points
 
-- Add deterministic routing, held-out confidence calibration, and opt-in `pre_llm_call` injection.
-- Gate: predeclared injection precision/context-pollution target met; default remains off; timeout/error path verified fail-open.
+- Add a host adapter around `WikiService` without importing host code into the
+  core.
+- Add a retrieval experiment behind an explicit disabled-by-default setting and
+  the regression protocol.
+- Add a model backend only with dimension, recipe, provenance, offline, and
+  resource behavior defined.
+- Add a schema migration as the next ordered, transactional version with
+  rollback and integrity coverage.
 
-### V2
-
-- Add file watching, resolved wikilinks/backlinks, route-aware retrieval, temporal/project signals, and performance optimization only when each improves held-out results without authority regression.
-
-### V3
-
-Advanced GraphRAG, MCP, external APIs, additional agent integrations, and wiki write-back require demonstrated demand plus separate scope, privacy, and threat reviews.
-
-## Non-goals before V1
-
-Entity extraction, community detection, HyDE, query decomposition, remote embedding APIs, MCP, web UI, and source-writing automation are not V1 work.
+See [CONTRIBUTING.md](../CONTRIBUTING.md) for setup and required checks.

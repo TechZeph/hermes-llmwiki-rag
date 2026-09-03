@@ -54,10 +54,17 @@ show `safety_passed = true` (held-out precision ≥ 0.90, abstain rate ≥
 1. Hermes appends injected context to the user message and may persist
    it in an `api_content` sidecar for replay; enabling injection means
    retrieved excerpts can appear in Hermes session storage.
-2. The current gate is conservative (coverage 0.42), so default-on is not
+2. The current gate is conservative (held-out coverage 0.29), so default-on is not
    recommended and is not offered.
 
 ## Reporting
 
-Security issues: open a private report on the GitHub repository rather
-than a public issue.
+Security issues: follow the private reporting process in
+[SECURITY.md](../SECURITY.md) rather than opening a public issue.
+
+## Next steps
+
+- [Install](install.md)
+- [Configuration](configuration.md)
+- [Operations and offline use](operations.md)
+- [Documentation index](README.md)
