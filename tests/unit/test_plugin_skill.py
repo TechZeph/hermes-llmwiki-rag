@@ -23,9 +23,7 @@ class SkillContext:
     def register_hook(self, _name: str, _callback: Any) -> None:
         return None
 
-    def register_skill(
-        self, name: str, path: Path, description: str | None = None
-    ) -> None:
+    def register_skill(self, name: str, path: Path, description: str | None = None) -> None:
         self.skills.append((name, Path(path), description))
 
     def on_unload(self, _callback: Any) -> None:
