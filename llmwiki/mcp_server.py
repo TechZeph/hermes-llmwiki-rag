@@ -38,7 +38,7 @@ def build_server(
         from mcp.server.mcpserver import MCPServer
     except ImportError as exc:  # pragma: no cover - depends on the optional extra
         raise RuntimeError(
-            "MCP support requires the 'mcp' extra: pip install 'hermes-llmwiki-rag[mcp]'"
+            "MCP support requires the 'mcp' extra: pip install 'llmwiki-rag[mcp]'"
         ) from exc
 
     service = WikiService(config, embedder_factory=embedder_factory, gate_path=gate_path)

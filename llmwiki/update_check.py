@@ -17,9 +17,7 @@ from packaging.version import InvalidVersion, Version
 
 PACKAGE_NAME = "llmwiki-rag"
 PYPI_URL = f"https://pypi.org/pypi/{PACKAGE_NAME}/json"
-GITHUB_LATEST_RELEASE_URL = (
-    "https://api.github.com/repos/TechZeph/hermes-llmwiki-rag/releases/latest"
-)
+GITHUB_LATEST_RELEASE_URL = "https://api.github.com/repos/TechZeph/llmwiki-rag/releases/latest"
 FetchJson = Callable[[str, float], dict[str, Any]]
 CheckForUpdate = Callable[..., dict[str, str]]
 

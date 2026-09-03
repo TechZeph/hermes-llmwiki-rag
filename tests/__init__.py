@@ -1,1 +1,1 @@
-"""Tests package for hermes-llmwiki-rag."""
+"""Tests package for llmwiki-rag."""

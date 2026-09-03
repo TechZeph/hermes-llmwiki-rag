@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "llmwiki-rag"
 version = "0.1.0"
-description = "Local-first hybrid RAG over an Obsidian vault, as a standalone plugin for Nous Hermes Agent."
+description = "Local-first hybrid RAG for Markdown and Obsidian knowledge bases, with CLI, MCP, and Hermes Agent integration."
 readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE"]

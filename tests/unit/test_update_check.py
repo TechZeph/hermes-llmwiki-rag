@@ -44,6 +44,7 @@ def test_check_falls_back_to_github_releases_when_pypi_is_unavailable() -> None:
     assert status["latest_version"] == "0.2.0"
     assert status["url"].endswith("/v0.2.0")
     assert len(calls) == 2
+    assert calls[1] == "https://api.github.com/repos/TechZeph/llmwiki-rag/releases/latest"
 
 
 def test_background_checker_reports_checking_then_the_advisory_result() -> None:

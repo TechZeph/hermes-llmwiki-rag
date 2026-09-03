@@ -6,8 +6,8 @@ never imports Hermes; this package is the only adapter layer.
 
 Install (development):
 
-    ln -s /path/to/hermes-llmwiki-rag/hermes_plugin ~/.hermes/plugins/llmwiki
-    ~/.hermes/hermes-agent/venv/bin/pip install -e /path/to/hermes-llmwiki-rag
+    ln -s /path/to/llmwiki-rag/hermes_plugin ~/.hermes/plugins/llmwiki
+    ~/.hermes/hermes-agent/venv/bin/pip install -e /path/to/llmwiki-rag
 
 Then set ``plugins.entries.llmwiki.settings.vault`` in ``~/.hermes/config.yaml``.
 """
