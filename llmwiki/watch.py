@@ -65,6 +65,15 @@ def _relevant(vault: Path, settings: Settings, raw_path: str) -> str | None:
     return rel
 
 
+def _is_indexable_event(event: Any) -> bool:
+    """Return whether a watchdog event can change the indexed Markdown.
+
+    Reading every document during an index pass emits opened/closed events on
+    Linux. Treating those as changes makes the watcher trigger itself forever.
+    """
+    return getattr(event, "event_type", "") in {"created", "modified", "deleted", "moved"}
+
+
 def watch_vault(
     settings: Settings,
     *,
@@ -94,7 +103,7 @@ def watch_vault(
 
     class Handler(FileSystemEventHandler):
         def on_any_event(self, event: FileSystemEvent) -> None:
-            if event.is_directory:
+            if event.is_directory or not _is_indexable_event(event):
                 return
             for candidate in (getattr(event, "src_path", None), getattr(event, "dest_path", None)):
                 if not candidate:

@@ -6,9 +6,11 @@ import threading
 import time
 from pathlib import Path
 
+from watchdog.events import FileClosedEvent, FileModifiedEvent, FileOpenedEvent
+
 from llmwiki import db as dbmod
 from llmwiki.config import Settings
-from llmwiki.watch import Coalescer, watch_vault
+from llmwiki.watch import Coalescer, _is_indexable_event, watch_vault
 from tests.helpers import SAMPLE_KEYWORDS, SAMPLE_VAULT, KeywordEmbedder, write_vault
 
 
@@ -21,6 +23,13 @@ def test_coalescer_collapses_bursts_and_respects_debounce() -> None:
     assert c.due(11.5)
     assert c.drain() == {"wiki/a.md", "wiki/b.md"}
     assert not c.due(20.0)
+
+
+def test_watcher_ignores_read_only_events() -> None:
+    path = "/vault/wiki/page.md"
+    assert not _is_indexable_event(FileOpenedEvent(path))
+    assert not _is_indexable_event(FileClosedEvent(path))
+    assert _is_indexable_event(FileModifiedEvent(path))
 
 
 def test_watch_runs_on_create_modify_and_delete(tmp_path: Path) -> None:
