@@ -66,7 +66,7 @@ exclude = ["tests*", "docs*"]
 
 [tool.setuptools.package-data]
 llmwiki = ["py.typed"]
-hermes_plugin = ["plugin.yaml", "injection_gate.json"]
+hermes_plugin = ["plugin.yaml", "injection_gate.json", "skills/*/SKILL.md"]
 
 # --- Ruff -------------------------------------------------------------------
 [tool.ruff]

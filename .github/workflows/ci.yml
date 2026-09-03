@@ -63,7 +63,7 @@ jobs:
           python -m pip install --upgrade pip build twine
           python -m build
           twine check dist/*
-      - name: Wheel ships the plugin manifest and gate
+      - name: Wheel ships the plugin manifest, gate, and skill
         run: |
           python - <<'EOF'
           import glob, zipfile
@@ -71,6 +71,7 @@ jobs:
           names = zipfile.ZipFile(wheel).namelist()
           assert "hermes_plugin/plugin.yaml" in names, names
           assert "hermes_plugin/injection_gate.json" in names, names
+          assert "hermes_plugin/skills/using-llmwiki/SKILL.md" in names, names
           print("ok", wheel)
           EOF
       - uses: actions/upload-artifact@v4

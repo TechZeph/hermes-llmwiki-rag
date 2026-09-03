@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import contextlib
 import logging
+from pathlib import Path
 from typing import Any
 
 __all__ = ["register"]
@@ -23,10 +24,15 @@ __all__ = ["register"]
 logger = logging.getLogger("llmwiki.plugin")
 
 TOOLSET = "llmwiki"
+SKILL_NAME = "using-llmwiki"
+SKILL_DESCRIPTION = (
+    "Operational guidance for choosing llmwiki profiles, retrieval modes, related-page exploration, "
+    "freshness checks, citations, and safe reindex behavior."
+)
 
 
 def register(ctx: Any) -> None:
-    """Register the llmwiki tools and the opt-in ``pre_llm_call`` hook."""
+    """Register the llmwiki tools, bundled skill, and opt-in ``pre_llm_call`` hook."""
     from .runtime import PluginConfig, PluginRuntime
     from .schemas import REINDEX_SCHEMA, RELATED_SCHEMA, SEARCH_SCHEMA, STATUS_SCHEMA
     from .tools import make_handlers
@@ -78,6 +84,12 @@ def register(ctx: Any) -> None:
         description=RELATED_SCHEMA["description"],
         emoji="🕸️",
     )
+
+    register_skill = getattr(ctx, "register_skill", None)
+    if callable(register_skill):
+        skill_path = Path(__file__).parent / "skills" / SKILL_NAME / "SKILL.md"
+        register_skill(SKILL_NAME, skill_path, SKILL_DESCRIPTION)
+
     # Always registered so the manifest and the runtime agree; it returns
     # None unless auto_inject is enabled and a calibrated gate exists.
     register_command = getattr(ctx, "register_command", None)

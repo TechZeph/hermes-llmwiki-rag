@@ -58,6 +58,10 @@ hermes gateway restart
 
 The plugin uses the vault selected during setup and keeps its index current in
 the background by default. Set `watch: false` in the plugin settings to opt out.
+It also bundles the `llmwiki:using-llmwiki` Hermes skill, which gives agents
+retrieval guidance for profile selection, citations, related-page exploration,
+freshness checks, and safe reindex behavior. Load it with
+`skill_view("llmwiki:using-llmwiki")` when that guidance is useful.
 
 Windows CLI and MCP installation, manual setup, upgrades, and uninstall steps
 are in the [installation guide](docs/install.md).
