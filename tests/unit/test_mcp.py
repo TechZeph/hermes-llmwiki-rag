@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 
+from llmwiki import mcp_server
 from llmwiki.config import Settings
 from llmwiki.indexer import Indexer
 from llmwiki.mcp_server import build_server
@@ -105,3 +106,32 @@ def test_cli_mcp_command_exists(tmp_path: Path) -> None:
 
     result = CliRunner().invoke(main, ["mcp", "--help"])
     assert result.exit_code == 0 and "stdio" in result.output
+
+
+def test_stdio_server_starts_advisory_update_check(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    calls: list[str] = []
+
+    class Service:
+        def start_update_check(self) -> None:
+            calls.append("update")
+
+        def ensure_watcher(self) -> None:
+            calls.append("watcher")
+
+        def close(self) -> None:
+            calls.append("close")
+
+    class Server:
+        llmwiki_service = Service()
+
+        def run(self, *, transport: str) -> None:
+            assert transport == "stdio"
+            calls.append("run")
+
+    monkeypatch.setattr(mcp_server, "build_server", lambda config: Server())
+
+    mcp_server.serve_stdio(ServiceConfig(vault=str(tmp_path)))
+
+    assert calls == ["update", "watcher", "run", "close"]

@@ -107,7 +107,9 @@ Precedence for every setting: CLI flag > `LLMWIKI_*` environment > config file
 ```
 
 Serves the same four tools over stdio for Claude Code, Codex, or any MCP host.
-Client config and details: `docs/install.md`.
+Client config and details: `docs/install.md`. MCP and Hermes startup perform a
+non-blocking advisory update check (PyPI, then GitHub Releases); status reports
+the result and neither surface installs anything automatically.
 
 ## Hermes plugin
 

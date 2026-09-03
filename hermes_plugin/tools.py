@@ -161,8 +161,9 @@ class Handlers:
         )
 
     def on_session_start(self, **kwargs: Any) -> None:
-        """Lazy watcher start on the first session; never returns content."""
+        """Start optional background services on first session; never returns content."""
         self.runtime.ensure_watcher()
+        self.runtime.start_update_check()
         return None
 
     def pre_llm_call(self, user_message: str = "", **kwargs: Any) -> dict[str, str] | None:

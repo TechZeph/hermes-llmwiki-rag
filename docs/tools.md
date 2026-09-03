@@ -35,7 +35,10 @@ effect, `integrity` (schema version, orphan/stale counts, rebuild state,
 (mode, age in seconds, counts, errors), `stale`, `reindex_job`,
 `watcher` (state, runs, last run, last error), `auto_inject`,
 `auto_inject_gate` (`absent` | `uncertified` | `certified-safe-low-coverage` | `certified`),
-`recent_injection_decisions` (last 5, no query text), `remediation[]`.
+`recent_injection_decisions` (last 5, no query text), `update_check` (current
+package version plus `not_checked` | `checking` | `up_to_date` |
+`update_available` | `unavailable` | `disabled`, release source and URL when
+available), `remediation[]`. The check is advisory and never installs updates.
 
 ## `llmwiki_reindex`
 

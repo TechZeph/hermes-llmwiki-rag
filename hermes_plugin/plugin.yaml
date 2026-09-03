@@ -88,3 +88,11 @@ config_schema:
     type: int
     default: 2
     description: "Seconds of filesystem quiet before a watch-triggered incremental reindex."
+  update_check:
+    type: bool
+    default: true
+    description: "Check PyPI, then GitHub Releases, once at plugin startup; reports only and never installs."
+  update_check_timeout_s:
+    type: int
+    default: 2
+    description: "Per-source timeout in seconds for the advisory startup update check (1-10)."

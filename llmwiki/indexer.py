@@ -29,7 +29,7 @@ from pathlib import Path
 
 from . import db as dbmod
 from .chunker import chunk_document
-from .chunks import delete_chunks_for_document, insert_chunks
+from .chunks import insert_chunks
 from .config import Settings
 from .corpus import classify_path
 from .embeddings import Embedder, model_provenance
@@ -426,7 +426,10 @@ class Indexer:
                 try:
                     doc, parsed = _build_document_and_parsed(vf, vault)
                     prev = conn.execute(
-                        "SELECT id, content_hash, mtime_ns FROM documents WHERE path = ?",
+                        """
+                        SELECT id, content_hash, mtime_ns, title, aliases_json, tags_json
+                        FROM documents WHERE path = ?
+                        """,
                         (doc.path,),
                     ).fetchone()
                     if prev is not None and prev[1] == doc.content_hash and prev[2] == doc.mtime_ns:
@@ -441,10 +444,25 @@ class Indexer:
                     with dbmod.transaction(conn):
                         doc_id = _upsert_document(conn, doc)
                         old_ids: list[int] = []
-                        if prev is not None:
-                            old_ids = delete_chunks_for_document(conn, doc_id)
+                        ids_to_embed: list[int] = []
+                        if prev is None:
+                            ids = _chunk_and_persist(conn, doc_id, parsed)
+                            ids_to_embed = ids
+                        else:
+                            ids, old_ids, ids_to_embed = _replace_chunks_reusing_embeddings(
+                                conn,
+                                doc_id,
+                                parsed,
+                                title=doc.title,
+                                aliases=doc.aliases,
+                                tags=doc.tags,
+                                previous_title=str(prev[3]),
+                                previous_aliases=tuple(
+                                    str(item) for item in json.loads(str(prev[4]))
+                                ),
+                                previous_tags=tuple(str(item) for item in json.loads(str(prev[5]))),
+                            )
                             cleanup_store.delete(old_ids)
-                        ids = _chunk_and_persist(conn, doc_id, parsed)
                         replace_document_links(
                             conn,
                             doc_id,
@@ -458,7 +476,7 @@ class Indexer:
                             n = _embed_chunks(
                                 conn,
                                 doc_id,
-                                ids,
+                                ids_to_embed,
                                 embedder=self.embedder,
                                 store=vector_store,
                                 model=self.settings.embedding_model,
@@ -569,6 +587,133 @@ def _chunk_and_persist(
     if not chunks:
         return []
     return insert_chunks(conn, document_id, chunks)
+
+
+def _replace_chunks_reusing_embeddings(
+    conn: sqlite3.Connection,
+    document_id: int,
+    parsed: ParsedDocument,
+    *,
+    title: str,
+    aliases: tuple[str, ...],
+    tags: tuple[str, ...],
+    previous_title: str,
+    previous_aliases: tuple[str, ...],
+    previous_tags: tuple[str, ...],
+    max_chunk_chars: int = 2000,
+) -> tuple[list[int], list[int], list[int]]:
+    """Replace a changed document while retaining byte-identical vector inputs.
+
+    Chunk ids are the vector-store keys. A changed document therefore keeps a
+    prior chunk row only when the complete, versioned document embedding input
+    is byte-for-byte identical. All other chunks are deleted and reinserted so
+    the FTS triggers and sqlite-vec cleanup retain their existing guarantees.
+    """
+    chunks = chunk_document(parsed, document_id=document_id, max_chunk_chars=max_chunk_chars)
+    old_rows = conn.execute(
+        """
+        SELECT id, position, heading_path_json, section_name, text
+        FROM chunks WHERE document_id = ? ORDER BY id
+        """,
+        (document_id,),
+    ).fetchall()
+
+    def embedding_input(
+        *,
+        input_title: str,
+        input_aliases: tuple[str, ...],
+        input_tags: tuple[str, ...],
+        heading_path: tuple[str, ...],
+        body: str,
+    ) -> str:
+        return format_document_embedding_input(
+            title=input_title,
+            heading_path=heading_path,
+            aliases=input_aliases,
+            tags=input_tags,
+            body=body,
+        )
+
+    reusable: dict[str, list[int]] = {}
+    for chunk_id, _position, heading_path_json, _section_name, body in old_rows:
+        key = embedding_input(
+            input_title=previous_title,
+            input_aliases=previous_aliases,
+            input_tags=previous_tags,
+            heading_path=tuple(str(item) for item in json.loads(str(heading_path_json))),
+            body=str(body),
+        )
+        reusable.setdefault(key, []).append(int(chunk_id))
+
+    reused_by_position: dict[int, int] = {}
+    pending = []
+    for chunk in chunks:
+        key = embedding_input(
+            input_title=title,
+            input_aliases=aliases,
+            input_tags=tags,
+            heading_path=chunk.heading_path,
+            body=chunk.text,
+        )
+        candidates = reusable.get(key)
+        if candidates:
+            reused_by_position[chunk.position] = candidates.pop()
+        else:
+            pending.append(chunk)
+
+    retained_ids = set(reused_by_position.values())
+    removed_ids = [int(row[0]) for row in old_rows if int(row[0]) not in retained_ids]
+    if removed_ids:
+        placeholders = ",".join("?" * len(removed_ids))
+        conn.execute(f"DELETE FROM chunks WHERE id IN ({placeholders})", removed_ids)
+
+    # A position can shift when a preceding chunk is inserted or removed. Move
+    # retained rows out of the unique (document_id, position) namespace first.
+    if reused_by_position:
+        conn.executemany(
+            "UPDATE chunks SET position = ? WHERE id = ?",
+            [(-chunk_id - 1, chunk_id) for chunk_id in reused_by_position.values()],
+        )
+        conn.executemany(
+            "UPDATE chunks SET position = ? WHERE id = ?",
+            [(position, chunk_id) for position, chunk_id in reused_by_position.items()],
+        )
+
+    now_ns = time.time_ns()
+    inserted_by_position: dict[int, int] = {}
+    for chunk in pending:
+        conn.execute(
+            """
+            INSERT INTO chunks (
+                document_id, position, heading_path_json, section_name,
+                text, text_hash, char_count, indexed_at_ns
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                document_id,
+                chunk.position,
+                json.dumps(list(chunk.heading_path), ensure_ascii=False),
+                chunk.section_name,
+                chunk.text,
+                hashlib.sha256(chunk.text.encode("utf-8")).hexdigest(),
+                len(chunk.text),
+                now_ns,
+            ),
+        )
+        row = conn.execute(
+            "SELECT id FROM chunks WHERE document_id = ? AND position = ?",
+            (document_id, chunk.position),
+        ).fetchone()
+        assert row is not None
+        inserted_by_position[chunk.position] = int(row[0])
+
+    ids = [
+        reused_by_position[chunk.position]
+        if chunk.position in reused_by_position
+        else inserted_by_position[chunk.position]
+        for chunk in chunks
+    ]
+    return ids, removed_ids, list(inserted_by_position.values())
 
 
 def _needs_full_reembed(conn: sqlite3.Connection, *, expected_model: str) -> bool:
